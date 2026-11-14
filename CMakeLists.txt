@@ -39,37 +39,23 @@ set(PROJECT_SOURCES
     src/resources.qrc
 )
 
-#TODO: use I18N_SOURCE_LANGUAGE in qt_standard_project_setup() for translation
-#when buntu/mint ship qt6.8
-set(TS_FILES
-    MControlCenter_de_DE.ts
-    MControlCenter_en.ts
-    MControlCenter_es.ts
-    MControlCenter_eu.ts
-    MControlCenter_fi_FI.ts
-    MControlCenter_fr.ts
-    MControlCenter_hu.ts
-    MControlCenter_it.ts
-    MControlCenter_nb.ts
-    MControlCenter_nl_NL.ts
-    MControlCenter_pt_BR.ts
-    MControlCenter_pt_PT.ts
-    MControlCenter_ru.ts
-    MControlCenter_tr.ts
-    MControlCenter_vi.ts
-    MControlCenter_zh_CN.ts
-)
+# Translations: the .ts sources live in src/i18n and resources.qrc embeds the compiled .qm files from the same folder, so compile them there
+# (they are git-ignored build products). A clean checkout needs this to build at all.
+set(TS_NAMES de_DE en es eu fi_FI fr hu it nb nl_NL pt_BR pt_PT ru tr vi zh_CN)
+set(TS_FILES "")
+foreach(n ${TS_NAMES})
+    list(APPEND TS_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/i18n/MControlCenter_${n}.ts)
+endforeach()
+foreach(ts ${TS_FILES})
+    set_source_files_properties(${ts} PROPERTIES OUTPUT_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/src/i18n)
+endforeach()
+qt_add_translation(QM_FILES ${TS_FILES})
+add_custom_target(mcc_translations DEPENDS ${QM_FILES})
 
 qt_add_executable(mcontrolcenter
     ${PROJECT_SOURCES}
 )
-
-qt_add_translations(mcontrolcenter
-    TS_FILES ${TS_FILES}
-    LUPDATE_OPTIONS
-        -no-obsolete
-        -locations none
-)
+add_dependencies(mcontrolcenter mcc_translations)
 
 add_subdirectory(src/helper ${CMAKE_BINARY_DIR}/helper)
 
