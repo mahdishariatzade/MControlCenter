@@ -26,6 +26,8 @@ setup() {   # fresh simulated machine: 60 % battery, charger in, limit 50-60, re
 }
 teardown() { kill "$SIM" 2>/dev/null; wait "$SIM" 2>/dev/null; rm -rf "$T"; }
 st_of() { sed -n "s/^$1=//p" "$T/run/calibration" 2>/dev/null; }
+wait_cond() { local i; for i in $(seq 1 100); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+unplugged() { [ $(( $(cat "$T/regs/191") & 1 )) = 1 ] && [ "$(cat "$T/ps/ADP1/online")" = 0 ]; }
 wait_state() { local i; for i in $(seq 1 200); do [ "$(st_of state)" = "$1" ] && return 0; sleep 0.1; done; return 1; }
 restored() { [ "$(cat "$T/regs/191")" = 56 ] && [ "$(cat "$T/ps/BAT1/charge_control_end_threshold")" = 60 ] && [ "$(cat "$T/ps/BAT1/charge_control_start_threshold")" = 50 ] && [ ! -f "$T/lib/calibration.orig" ]; }
 
@@ -38,7 +40,7 @@ teardown
 
 echo "2) cancelled (SIGTERM) in the middle of the discharge"; setup
 bash "$SCRIPT" run --floor=20 >/dev/null 2>&1 & P=$!
-wait_state discharging; ok "reached discharging" '[ "$(st_of state)" = discharging ]'
+wait_state discharging; wait_cond unplugged; ok "reached discharging" '[ "$(st_of state)" = discharging ]'
 ok "simulated unplug is really on (bit 0 set, AC offline)" '[ $(( $(cat "$T/regs/191") & 1 )) = 1 ] && [ "$(cat "$T/ps/ADP1/online")" = 0 ]'
 kill -TERM $P; wait $P 2>/dev/null
 ok "register + limits restored after cancel" 'restored'; ok "state is aborted" '[ "$(st_of state)" = aborted ]'
@@ -46,14 +48,14 @@ teardown
 
 echo "3) battery stops changing (stall watchdog)"; setup
 bash "$SCRIPT" run --floor=20 >/dev/null 2>&1 & P=$!
-wait_state discharging; touch "$T/freeze"; wait $P 2>/dev/null; rc=$?
+wait_state discharging; wait_cond unplugged; touch "$T/freeze"; wait $P 2>/dev/null; rc=$?
 ok "run ended with an error" "[ $rc != 0 ]"; ok "state is aborted" '[ "$(st_of state)" = aborted ]'
 ok "everything restored" 'restored'; ok "reason mentions no change" 'st_of msg | grep -qi "did not change\|no progress"'
 teardown
 
 echo "4) hard kill (SIGKILL) then recovery at boot"; setup
 bash "$SCRIPT" run --floor=20 >/dev/null 2>&1 & P=$!
-wait_state discharging; kill -KILL $P; wait $P 2>/dev/null
+wait_state discharging; wait_cond unplugged; kill -KILL $P; wait $P 2>/dev/null
 ok "kill left the simulation on and the saved originals behind" '[ $(( $(cat "$T/regs/191") & 1 )) = 1 ] && [ -f "$T/lib/calibration.orig" ]'
 bash "$SCRIPT" boot >/dev/null 2>&1
 ok "boot recovery restored everything" 'restored'
