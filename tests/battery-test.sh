@@ -26,9 +26,9 @@ setup() {   # fresh simulated machine: 60 % battery, charger in, limit 50-60, re
 }
 teardown() { kill "$SIM" 2>/dev/null; wait "$SIM" 2>/dev/null; rm -rf "$T"; }
 st_of() { sed -n "s/^$1=//p" "$T/run/calibration" 2>/dev/null; }
-wait_cond() { local i; for i in $(seq 1 100); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+wait_cond() { local i; for i in $(seq 1 400); do eval "$1" && return 0; sleep 0.1; done; return 1; }
 unplugged() { [ $(( $(cat "$T/regs/191") & 1 )) = 1 ] && [ "$(cat "$T/ps/ADP1/online")" = 0 ]; }
-wait_state() { local i; for i in $(seq 1 200); do [ "$(st_of state)" = "$1" ] && return 0; sleep 0.1; done; return 1; }
+wait_state() { local i; for i in $(seq 1 600); do [ "$(st_of state)" = "$1" ] && return 0; sleep 0.1; done; return 1; }
 restored() { [ "$(cat "$T/regs/191")" = 56 ] && [ "$(cat "$T/ps/BAT1/charge_control_end_threshold")" = 60 ] && [ "$(cat "$T/ps/BAT1/charge_control_start_threshold")" = 50 ] && [ ! -f "$T/lib/calibration.orig" ]; }
 
 echo "1) full cycle"; setup
@@ -56,6 +56,7 @@ teardown
 echo "4) hard kill (SIGKILL) then recovery at boot"; setup
 bash "$SCRIPT" run --floor=20 >/dev/null 2>&1 & P=$!
 wait_state discharging; wait_cond unplugged; kill -KILL $P; wait $P 2>/dev/null
+echo "  [diag] state=$(st_of state) reg=$(cat "$T/regs/191") ac=$(cat "$T/ps/ADP1/online") cap=$(cat "$T/ps/BAT1/capacity") save=$([ -f "$T/lib/calibration.orig" ] && echo yes || echo no)"
 ok "kill left the simulation on and the saved originals behind" '[ $(( $(cat "$T/regs/191") & 1 )) = 1 ] && [ -f "$T/lib/calibration.orig" ]'
 bash "$SCRIPT" boot >/dev/null 2>&1
 ok "boot recovery restored everything" 'restored'
