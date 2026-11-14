@@ -76,7 +76,7 @@ protected:
         p.drawLine(r.topLeft() + QPointF(0, 11), r.topLeft()); p.drawLine(r.topLeft(), r.topLeft() + QPointF(11, 0));
         p.drawLine(r.bottomRight() - QPointF(0, 11), r.bottomRight()); p.drawLine(r.bottomRight(), r.bottomRight() - QPointF(11, 0));
         p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(gAccent); p.drawText(QRectF(r.left() + 18, r.top() + 12, 28, 14), Qt::AlignLeft | Qt::AlignVCenter, idx);
-        p.setFont(fnt(RAJ, 14, QFont::DemiBold, 2.2)); p.setPen(kDim); p.drawText(QRectF(r.left() + 46, r.top() + 11, r.width() - 80, 16), Qt::AlignLeft | Qt::AlignVCenter, title);
+        p.setFont(fnt(RAJ, 14, QFont::DemiBold, 2.2)); p.setPen(kDim); p.drawText(QRectF(r.left() + (idx.isEmpty() ? 18 : 46), r.top() + 11, r.width() - 80, 16), Qt::AlignLeft | Qt::AlignVCenter, title);
         paintBody(p, QRectF(r.left() + 18, r.top() + 38, r.width() - 36, r.height() - 38 - 14));
     }
 };

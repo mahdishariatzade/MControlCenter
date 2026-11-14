@@ -82,6 +82,7 @@ void KeyboardMap::mousePressEvent(QMouseEvent *e) {
         int k = keyAt(pt); if (k >= 0) { if (marked[step].contains(k)) marked[step].remove(k); else { for (auto &s : marked) s.remove(k); marked[step].insert(k); } drag = k; update(); }
         return;
     }
+    if (!advanced) return;
     if (bAll.contains(pt)) { selectAll(); if (onSelect) onSelect(); return; }
     if (bZones.contains(pt)) { showZones = !showZones; update(); return; }
     if (bCal.contains(pt)) { startCalibration(); return; }
@@ -110,14 +111,15 @@ void KeyboardMap::paintBody(QPainter &p, const QRectF &b) {
     auto button = [&](QRectF &r, double right, const QString &t, bool on) { QFont f = fnt(RAJ, 13, QFont::Bold, 1.3); p.setFont(f); double w = QFontMetricsF(f).horizontalAdvance(t) + 22; r = QRectF(right - w, b.top() - 31, w, 22);
         p.setPen(QPen(on ? gAccent : kLine, 1)); p.setBrush(on ? alpha(gAccent, 0.18) : QBrush(Qt::NoBrush)); p.drawPath(chamfer(r, 5)); p.setPen(on ? gAccent : kText); p.drawText(r, Qt::AlignCenter, t); return r.left() - 6; };
     double rx = b.right();
-    if (!calib) { rx = button(bAll, rx, "SELECT ALL", false); rx = button(bZones, rx, showZones ? "HIDE ZONE NUMBERS" : "SHOW ZONE NUMBERS", showZones); button(bCal, rx, map.calibrated ? "RE-CALIBRATE" : "CALIBRATE KEYBOARD", !map.calibrated); }
+    if (!calib && !advanced) { bAll = bZones = bCal = QRectF(); }
+    if (!calib && advanced) { rx = button(bAll, rx, "SELECT ALL", false); rx = button(bZones, rx, showZones ? "HIDE ZONE NUMBERS" : "SHOW ZONE NUMBERS", showZones); button(bCal, rx, map.calibrated ? "RE-CALIBRATE" : "CALIBRATE KEYBOARD", !map.calibrated); }
 
     // keyboard drawing
     const QSizeF ext = keyboardExtent(); const double footer = calib ? 54 : 22; area = QRectF(b.left(), b.top() + 2, b.width(), b.height() - footer - 4);
     scale = qMin(area.width() / ext.width(), area.height() / ext.height()); origin = QPointF(area.left() + (area.width() - scale * ext.width()) / 2, area.top() + (area.height() - scale * ext.height()) / 2);
     const auto &L = keyboardLayout(); QSet<int> markedAny; if (calib) for (int z = 0; z < zones; ++z) if (z != step) for (int k : marked[z]) markedAny.insert(k);
     for (int i = 0; i < L.size(); ++i) {
-        const QRectF r = keyRect(i); int z = map.keyZone.value(i, -1); bool selected = !calib && selKeys.contains(i); bool affected = !calib && !selected && z >= 0 && (sel & (1u << z)); bool hot = i == hotKey;
+        const QRectF r = keyRect(i); int z = map.keyZone.value(i, -1); bool selected = !calib && advanced && selKeys.contains(i); bool affected = !calib && advanced && !selected && z >= 0 && (sel & (1u << z)); bool hot = i == hotKey;
         QColor fill;
         if (calib) fill = marked[step].contains(i) ? QColor(255, 40, 30) : markedAny.contains(i) ? QColor(40, 70, 45) : QColor(28, 30, 33);
         else if (z < 0) fill = QColor(28, 30, 33);
@@ -130,7 +132,9 @@ void KeyboardMap::paintBody(QPainter &p, const QRectF &b) {
 
     // footer
     p.setFont(fnt(MONO, 10));
-    if (!calib) {
+    if (!calib && !advanced) {
+        p.setPen(kDim); p.drawText(QRectF(b.left(), b.bottom() - 18, b.width(), 18), Qt::AlignLeft | Qt::AlignVCenter, present ? "Live preview of your keyboard. Choose a look and a colour below." : "No keyboard controller connected.");
+    } else if (!calib) {
         p.setPen(present ? kDim : gAccent);
         p.drawText(QRectF(b.left(), b.bottom() - 18, b.width(), 18), Qt::AlignLeft | Qt::AlignVCenter,
                    !present ? "No keyboard controller connected." : map.calibrated ? "Click keys (drag or Ctrl+click for more), then choose a colour. Dashed keys share a hardware zone with your pick and change too."

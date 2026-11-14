@@ -31,7 +31,7 @@ class KeyboardMap : public kit::Panel {
 public:
     explicit KeyboardMap(QWidget *p);
     RgbProfile *prof = nullptr; KeyMap map; int zones = 24; bool present = false; quint32 sel = 0xFFFFFFu;
-    bool showZones = false;
+    bool showZones = false, advanced = false;      // Easy view: a preview only (colours apply to the whole keyboard); Advanced: pick keys, calibrate
     std::function<void()> onSelect, onMapChanged;
     std::function<void(int)> onCalibZone;             // wizard: blink this zone on the keyboard
     std::function<void()> onCalibEnd;

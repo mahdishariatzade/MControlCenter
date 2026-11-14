@@ -58,7 +58,7 @@ private:
     LightingPage *lightingPage = nullptr; RgbWorker *rgb = nullptr; QThread rgbThread; QTimer rgbDebounce;
     bool rgbCalibrating = false; int rgbBattery = 100; QJsonObject rgbLastSent;
     RgbProfile rgbUser; bool rgbChosen = false, rgbFollowMode = false, rgbFlashThermal = false, rgbPulseLow = false, rgbOffOnLock = false, rgbLocked = false, rgbLowBat = false, rgbPresent = false; int rgbLastMode = -2;
-    RgbProfile rgbEffective() const; void rgbPush(); void rgbSave(); void rgbLoad(); void onScreenLocked(bool locked);
+    RgbProfile rgbEffective() const; void rgbPush(); void rgbSave(); void rgbLoad(); void rgbReset(); void onScreenLocked(bool locked);
     void buildPages();
     void syncPages(const Snapshot &s);
     void syncFanEditor(); void writeFanToUi(int fan, const QVector<int> &speeds, const QVector<int> &temps);

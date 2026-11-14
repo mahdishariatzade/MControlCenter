@@ -219,9 +219,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(bridge, &ControlBridge::modeRequested, this, &MainWindow::setModeIndex);
     connect(bridge, &ControlBridge::coolerBoostRequested, this, [this](bool on) { setCoolerBoostState(on); });
     connect(bridge, &ControlBridge::chargeLimitRequested, this, &MainWindow::setChargeLimit);
-    connect(bridge, &ControlBridge::keyboardColor, this, [this](const QString &hex) { QColor c(hex); if (!c.isValid()) return; rgbUser.mode = RgbProfile::Static; rgbUser.color = c; rgbChosen = true; rgbSave(); if (lightingPage) lightingPage->setProfile(rgbUser); rgbPush(); });
-    connect(bridge, &ControlBridge::keyboardOff, this, [this] { rgbUser.mode = RgbProfile::Off; rgbChosen = true; rgbSave(); if (lightingPage) lightingPage->setProfile(rgbUser); rgbPush(); });
-    connect(bridge, &ControlBridge::keyboardRestore, this, [this] { rgbChosen = false; QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection); });
+    connect(bridge, &ControlBridge::keyboardColor, this, [this](const QString &hex) { QColor c(hex); if (!c.isValid()) return; rgbUser.mode = RgbProfile::Static; rgbUser.color = c; rgbChosen = true; rgbSave(); if (lightingPage) { lightingPage->setChosen(true); lightingPage->setProfile(rgbUser); } rgbPush(); });
+    connect(bridge, &ControlBridge::keyboardOff, this, [this] { rgbUser.mode = RgbProfile::Off; rgbChosen = true; rgbSave(); if (lightingPage) { lightingPage->setChosen(true); lightingPage->setProfile(rgbUser); } rgbPush(); });
+    connect(bridge, &ControlBridge::keyboardRestore, this, [this] { rgbChosen = false; if (lightingPage) lightingPage->setChosen(false); QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection); });
     connect(bridge, &ControlBridge::showRequested, this, [this] { showNormal(); raise(); activateWindow(); });
     QDBusConnection::sessionBus().registerObject("/Control", bridge, QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals);
 
@@ -1242,15 +1242,16 @@ void MainWindow::buildPages() {
     swap(ui->overviewTab, controlsPage, tr("Controls")); swap(ui->batteryTab, batteryPage, tr("Battery")); swap(ui->fanControlTab, fanPage, tr("Fans")); swap(ui->aboutTab, aboutPage, tr("About"));
     ui->tabWidget->insertTab(ui->tabWidget->indexOf(aboutPage), lightingPage, tr("Lighting"));
     ui->tabWidget->insertTab(ui->tabWidget->indexOf(aboutPage), settingsPage, tr("Settings"));
-    lightingPage->onProfile = [this](const RgbProfile &p) { rgbUser = p; rgbChosen = true; rgbSave(); rgbPush(); };
+    lightingPage->onProfile = [this](const RgbProfile &p) { rgbUser = p; rgbChosen = true; rgbSave(); lightingPage->setChosen(true); rgbPush(); };
+    lightingPage->onReset = [this] { rgbReset(); };
     lightingPage->onFollow = [this](int what, bool on) {
         if (what == 0) rgbFollowMode = on; else if (what == 1) rgbFlashThermal = on; else if (what == 2) rgbPulseLow = on; else rgbOffOnLock = on;
         rgbSave(); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock); rgbPush(); };
-    lightingPage->onRestoreFirmware = [this] { rgbChosen = false; rgbFollowMode = rgbPulseLow = rgbOffOnLock = false; rgbSave(); lightingPage->setFollow(false, rgbFlashThermal, false, false); QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection); };
+    lightingPage->onRestoreFirmware = [this] { rgbChosen = false; rgbFollowMode = rgbPulseLow = rgbOffOnLock = false; rgbSave(); lightingPage->setChosen(false); lightingPage->setFollow(false, rgbFlashThermal, false, false); QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection); };
     lightingPage->onPreviewZone = [this](int z) { QMetaObject::invokeMethod(rgb, "previewZone", Qt::QueuedConnection, Q_ARG(int, z)); };
     lightingPage->onCalibrating = [this](bool on) { bool was = rgbCalibrating; rgbCalibrating = on; if (was && !on) { rgbLastSent = QJsonObject(); rgbPush(); } };      // calibration owns the keyboard until it ends
     lightingPage->onMapChanged = [this] { rgbLastSent = QJsonObject(); rgbPush(); };
-    lightingPage->setProfile(rgbUser); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock);
+    lightingPage->setChosen(rgbChosen); lightingPage->setProfile(rgbUser); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock);
     ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->debugTab));
     settingsPage->onChange = [this](SettingsPage::Item w, int v) { settingChanged(w, v); };
     connect(&gameTimer, &QTimer::timeout, this, &MainWindow::gameModeTick); gameTimer.setInterval(5000);
@@ -1406,7 +1407,7 @@ void MainWindow::rgbLoad() {
     rgbFollowMode = s.getValue("Rgb/followMode").toBool(); rgbFlashThermal = s.getValue("Rgb/flashThermal").toBool(); rgbPulseLow = s.getValue("Rgb/pulseLow").toBool(); rgbOffOnLock = s.getValue("Rgb/offOnLock").toBool();
 }
 void MainWindow::rgbSave() {
-    Settings::setValue("Rgb/profile", QString::fromUtf8(QJsonDocument(rgbUser.toJson()).toJson(QJsonDocument::Compact)));
+    Settings::setValue("Rgb/profile", rgbChosen ? QString::fromUtf8(QJsonDocument(rgbUser.toJson()).toJson(QJsonDocument::Compact)) : QString());
     Settings::setValue("Rgb/followMode", rgbFollowMode); Settings::setValue("Rgb/flashThermal", rgbFlashThermal); Settings::setValue("Rgb/pulseLow", rgbPulseLow); Settings::setValue("Rgb/offOnLock", rgbOffOnLock);
 }
 // Precedence: screen locked (off) > low battery (red pulse) > power-mode colour > the user's own lighting.
@@ -1429,3 +1430,10 @@ void MainWindow::rgbPush() {
     if (managed) rgbDebounce.start();
 }
 void MainWindow::onScreenLocked(bool locked) { if (rgbLocked == locked) return; rgbLocked = locked; rgbPush(); }
+
+// "Reset to default": forget the saved lighting and every follow rule, hand the keyboard back to its own lighting.
+void MainWindow::rgbReset() {
+    rgbUser = RgbProfile(); rgbChosen = false; rgbFollowMode = rgbFlashThermal = rgbPulseLow = rgbOffOnLock = false; rgbLastSent = QJsonObject(); rgbSave();
+    if (lightingPage) { lightingPage->setProfile(rgbUser); lightingPage->setFollow(false, false, false, false); lightingPage->setChosen(false); }
+    QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection);
+}

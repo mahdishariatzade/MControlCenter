@@ -168,6 +168,28 @@ protected:
     }
 };
 
+
+// ───────────────────────────── status strip: says in plain words what the app is doing, with Reset and Easy/Advanced ─────────────────────────────
+class LightStatus : public QWidget {
+public:
+    LightStatus(QWidget *p) : QWidget(p) { setFixedHeight(70); setMouseTracking(true); }
+    QString head, body; bool warn = false, advanced = false; std::function<void()> onAdvanced, onReset;
+protected:
+    QRectF bMode, bReset;
+    void mousePressEvent(QMouseEvent *e) override { if (bMode.contains(e->position()) && onAdvanced) onAdvanced(); else if (bReset.contains(e->position()) && onReset) onReset(); }
+    void mouseMoveEvent(QMouseEvent *e) override { setCursor(bMode.contains(e->position()) || bReset.contains(e->position()) ? Qt::PointingHandCursor : Qt::ArrowCursor); }
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing); QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
+        p.setPen(QPen(warn ? gAccent : kLine, 1)); p.setBrush(warn ? alpha(gAccent, 0.08) : kPanel); p.drawPath(chamfer(r, 12));
+        p.setPen(Qt::NoPen); p.setBrush(warn ? gAccent : kText); p.drawRect(QRectF(r.left() + 16, r.top() + 18, 8, 8));
+        double right = r.right() - 14; QFont bf = fnt(RAJ, 14, QFont::Bold, 1.5); p.setFont(bf);
+        auto button = [&](QRectF &rr, const QString &t, bool fill) { double w = QFontMetricsF(bf).horizontalAdvance(t) + 26; rr = QRectF(right - w, r.top() + 19, w, 32); right -= w + 8; p.setPen(QPen(fill ? gAccent : kLine, 1)); p.setBrush(fill ? alpha(gAccent, 0.16) : QBrush(Qt::NoBrush)); p.drawPath(chamfer(rr, 7)); p.setPen(fill ? gAccent : kText); p.drawText(rr, Qt::AlignCenter, t); };
+        button(bReset, "RESET TO DEFAULT", false); button(bMode, advanced ? "SWITCH TO EASY" : "SHOW ADVANCED", advanced);
+        p.setFont(fnt(RAJ, 18, QFont::Bold, 1.2)); p.setPen(kText); p.drawText(QRectF(r.left() + 34, r.top() + 8, right - r.left() - 40, 24), Qt::AlignLeft | Qt::AlignVCenter, head);
+        p.setFont(fnt(MONO, 10)); p.setPen(kDim); p.drawText(QRectF(r.left() + 34, r.top() + 33, right - r.left() - 40, 32), Qt::AlignLeft | Qt::TextWordWrap, body);
+    }
+};
+
 // ───────────────────────────── page ─────────────────────────────
 KeyMap LightingPage::keyMap() const { return kb->map; }
 void LightingPage::debugCalibrate() { kb->present = true; kb->startCalibration(); }
@@ -181,10 +203,13 @@ LightingPage::LightingPage(QWidget *p) : AnimPage(p) {
 
     kb = new KeyboardMap(content); colour = new ColorPanel(content); presets = new PresetPanel(content); slotPanel = new SlotsPanel(content);
     groupsPanel = new GroupsPanel(content); effect = new RowsPanel("02", "EFFECT", content); tools = new RowsPanel("04", "PAINT TOOLS", content); follow = new RowsPanel("07", "FOLLOW THE LAPTOP", content);
-    kb->setMinimumHeight(310); grid->addWidget(kb, 0, 0, 1, 3);
-    grid->addWidget(effect, 1, 0); grid->addWidget(colour, 1, 1); grid->addWidget(tools, 1, 2);
-    grid->addWidget(presets, 2, 0); grid->addWidget(slotPanel, 2, 1); grid->addWidget(follow, 2, 2); grid->addWidget(groupsPanel, 3, 0);
-    for (int c = 0; c < 3; ++c) grid->setColumnStretch(c, 1); grid->setRowStretch(4, 1);
+    status = new LightStatus(content); kb->setMinimumHeight(290);
+    grid->addWidget(status, 0, 0, 1, 3); grid->addWidget(kb, 1, 0, 1, 3);
+    grid->addWidget(effect, 2, 0); grid->addWidget(colour, 2, 1); grid->addWidget(presets, 2, 2);                       // Easy view: look, colour, presets
+    grid->addWidget(tools, 3, 0); grid->addWidget(slotPanel, 3, 1); grid->addWidget(follow, 3, 2); grid->addWidget(groupsPanel, 4, 0);   // Advanced
+    for (int c = 0; c < 3; ++c) grid->setColumnStretch(c, 1); grid->setRowStretch(5, 1);
+    kb->title = "PREVIEW"; kb->idx = ""; effect->title = "1 · CHOOSE A LOOK"; effect->idx = ""; colour->title = "2 · PICK A COLOUR"; colour->idx = ""; presets->title = "OR START FROM A PRESET"; presets->idx = "";
+    tools->title = "PAINT TOOLS"; tools->idx = "+"; slotPanel->title = "MY SAVED LOOKS"; slotPanel->idx = "+"; follow->title = "FOLLOW THE LAPTOP"; follow->idx = "+"; groupsPanel->title = "KEY GROUPS"; groupsPanel->idx = "+";
     adopt(kb, 0.0); adopt(effect, 0.08); adopt(colour, 0.12); adopt(tools, 0.16); adopt(presets, 0.2); adopt(slotPanel, 0.24); adopt(follow, 0.28); adopt(groupsPanel, 0.32);
     kb->prof = &prof; kb->selectAll();
     groupsPanel->currentKeys = [this] { return kb->selectedKeys(); };
@@ -198,13 +223,13 @@ LightingPage::LightingPage(QWidget *p) : AnimPage(p) {
 
     // effect modes
     auto setMode = [this](RgbProfile::Mode m) { prof.mode = m; syncRows(); changed(); };
-    { Row r; r.type = Row::Segment; r.label = "Effect"; r.opts = {"Static", "Zones", "Off"}; r.pick = [setMode](int i) { setMode(i == 0 ? RgbProfile::Static : i == 1 ? RgbProfile::Zones : RgbProfile::Off); }; effect->rows.push_back(r); }
+    { Row r; r.type = Row::Segment; r.label = "Look"; r.opts = {"One colour", "Lights off"}; effect->rows.push_back(r); }
     { Row r; r.type = Row::Segment; r.opts = {"Breathing", "Cycle", "Wave"}; r.sel = -1; r.pick = [setMode](int i) { setMode(i == 0 ? RgbProfile::Breathing : i == 1 ? RgbProfile::Cycle : RgbProfile::Wave); }; effect->rows.push_back(r); }
-    { Row r; r.type = Row::Segment; r.label = "Live meter"; r.sub = "Fills the keyboard like a gauge"; r.opts = {"CPU temp", "Battery"}; r.sel = -1; r.pick = [this](int i) { prof.mode = RgbProfile::Meter; prof.meterSource = i; syncRows(); changed(); }; effect->rows.push_back(r); }
+    { Row r; r.type = Row::Segment; r.label = "Live meter"; r.sub = "Fills the keyboard like a gauge"; r.visible = false; r.opts = {"CPU temp", "Battery"}; r.sel = -1; r.pick = [this](int i) { prof.mode = RgbProfile::Meter; prof.meterSource = i; syncRows(); changed(); }; effect->rows.push_back(r); }
     { Row r; r.type = Row::Segment; r.label = "Brightness"; r.opts = {"25%", "50%", "75%", "100%"}; r.pick = [this](int i) { prof.brightness = 25 * (i + 1); syncRows(); changed(); }; effect->rows.push_back(r); }
     { Row r; r.type = Row::Segment; r.label = "Speed"; r.opts = {"Slow", "Medium", "Fast"}; r.pick = [this](int i) { prof.speed = i; syncRows(); changed(); }; effect->rows.push_back(r); }
     { Row r; r.type = Row::Segment; r.label = "Wave direction"; r.opts = {"Right to left", "Left to right"}; r.pick = [this](int i) { prof.direction = i; syncRows(); changed(); }; effect->rows.push_back(r); }
-    effect->relayout();
+    rebuildEffectRows();
 
     colour->onColor = [this](const QColor &c, int t) { applyColor(c, t); };
     colour->onPalEdit = [this](int d) { if (d > 0 && prof.palette.size() < 4) prof.palette << colour->a; else if (d < 0 && prof.palette.size() > 1) prof.palette.removeLast(); colour->target = qMin(colour->target, 1 + int(prof.palette.size())); syncRows(); changed(); };
@@ -237,18 +262,49 @@ LightingPage::LightingPage(QWidget *p) : AnimPage(p) {
     { Row r; r.type = Row::Button; r.label = "Restore stock lighting"; r.click = [this] { if (onRestoreFirmware) onRestoreFirmware(); }; follow->rows.push_back(r); }
     { Row r; r.type = Row::Text; r.label = "Lighting is never written to the keyboard's memory. It is re-applied at login and after sleep; a reboot without MControlCenter restores the factory look."; follow->rows.push_back(r); }
     follow->relayout();
+
+    status->onAdvanced = [this] { setAdvanced(!advanced); };
+    status->onReset = [this] { if (onReset) onReset(); };
+    setAdvanced(Settings().getValue("Rgb/advanced").toBool());
+}
+
+void LightingPage::rebuildEffectRows() {
+    auto setMode = [this](RgbProfile::Mode m) { prof.mode = m; syncRows(); changed(); };
+    Row &r = effect->rows[0];
+    if (advanced) { r.opts = {"One colour", "Zones", "Lights off"}; r.pick = [setMode](int i) { setMode(i == 0 ? RgbProfile::Static : i == 1 ? RgbProfile::Zones : RgbProfile::Off); }; }
+    else { r.opts = {"One colour", "Lights off"}; r.pick = [setMode](int i) { setMode(i == 0 ? RgbProfile::Static : RgbProfile::Off); }; }
+    effect->rows[2].visible = advanced; effect->relayout();
+}
+
+void LightingPage::setAdvanced(bool adv) {
+    advanced = adv; Settings::setValue("Rgb/advanced", adv); kb->advanced = adv; status->advanced = adv;
+    for (QWidget *w : std::initializer_list<QWidget *>{tools, slotPanel, follow, groupsPanel}) w->setVisible(adv);
+    if (!adv) kb->selectAll();
+    rebuildEffectRows(); syncRows(); refreshStatus(); kb->update(); kick();
+}
+
+void LightingPage::setChosen(bool c) { chosen = c; refreshStatus(); }
+
+void LightingPage::refreshStatus() {
+    static const char *names[] = {"one colour", "custom zone colours", "breathing", "colour cycle", "wave", "lights off", "live meter"};
+    QString what = names[qBound(0, int(prof.mode), 6)]; if (prof.mode == RgbProfile::Static) what += " " + prof.color.name().toUpper(); if (prof.mode == RgbProfile::Meter) what = prof.meterSource == 0 ? "live CPU temperature meter" : "live battery meter";
+    status->warn = !present || !chosen;
+    if (!present) { status->head = "NO KEYBOARD LIGHTING CONTROLLER FOUND"; status->body = deviceError.isEmpty() ? "This laptop's keyboard lighting is not controllable by this app, or the permission rule is missing (re-run install.sh)." : deviceError; }
+    else if (!chosen) { status->head = "NOT CONTROLLING YOUR KEYBOARD YET"; status->body = "Your keyboard is showing its own built-in lighting. Pick a look and a colour below to take over. Changes apply instantly."; }
+    else { status->head = "USING YOUR SAVED LIGHTING: " + what.toUpper() + (follows ? "  ·  FOLLOWS POWER MODE" : ""); status->body = "This is remembered and re-applied at login and after sleep. Not what you want? Press RESET TO DEFAULT."; }
+    status->update();
 }
 
 void LightingPage::setDevice(bool pr, int z, const QString &name, const QString &error) {
-    const int old = kb->zones; present = pr; zones = pr ? z : 24; kb->present = pr; kb->zones = zones; (void) name; (void) error;
-    if (kb->zones != old) kb->selectAll(); kb->update(); kick();
+    const int old = kb->zones; present = pr; zones = pr ? z : 24; kb->present = pr; kb->zones = zones; (void) name; deviceError = error;
+    if (kb->zones != old) kb->selectAll(); kb->update(); refreshStatus(); kick();
 }
-void LightingPage::setProfile(const RgbProfile &p) { prof = p; colour->a = p.color; colour->b = p.colorB; syncRows(); }
-void LightingPage::setFollow(bool m, bool t, bool l, bool k) { bool v[4] = {m, t, l, k}; for (int i = 0; i < 4; ++i) follow->rows[i].on = v[i]; follow->update(); kick(); }
+void LightingPage::setProfile(const RgbProfile &p) { prof = p; colour->a = p.color; colour->b = p.colorB; syncRows(); refreshStatus(); }
+void LightingPage::setFollow(bool m, bool t, bool l, bool k) { bool v[4] = {m, t, l, k}; for (int i = 0; i < 4; ++i) follow->rows[i].on = v[i]; follow->update(); follows = m; refreshStatus(); kick(); }
 
 void LightingPage::syncRows() {
     const RgbProfile::Mode m = prof.mode; const bool fx = m >= RgbProfile::Breathing && m <= RgbProfile::Wave;
-    effect->rows[0].sel = m == RgbProfile::Static ? 0 : m == RgbProfile::Zones ? 1 : m == RgbProfile::Off ? 2 : -1;
+    effect->rows[0].sel = advanced ? (m == RgbProfile::Static ? 0 : m == RgbProfile::Zones ? 1 : m == RgbProfile::Off ? 2 : -1) : (m == RgbProfile::Static ? 0 : m == RgbProfile::Off ? 1 : -1);
     effect->rows[1].sel = m == RgbProfile::Breathing ? 0 : m == RgbProfile::Cycle ? 1 : m == RgbProfile::Wave ? 2 : -1;
     effect->rows[2].sel = m == RgbProfile::Meter ? prof.meterSource : -1;
     effect->rows[3].sel = qBound(0, prof.brightness / 25 - 1, 3); effect->rows[4].sel = prof.speed; effect->rows[4].visible = fx; effect->rows[5].sel = prof.direction; effect->rows[5].visible = m == RgbProfile::Wave; effect->relayout();
@@ -261,7 +317,8 @@ void LightingPage::applyColor(const QColor &c, int target) {
     else if (target >= 2) { if (target - 2 < prof.palette.size()) prof.palette[target - 2] = c; }
     else {
         prof.color = c;
-        if (prof.mode == RgbProfile::Zones) { for (int z = 0; z < 24; ++z) if (kb->sel & (1u << z)) prof.zones[z] = c; }
+        if (prof.mode == RgbProfile::Zones && advanced) { for (int z = 0; z < 24; ++z) if (kb->sel & (1u << z)) prof.zones[z] = c; }
+        else if (prof.mode == RgbProfile::Zones || prof.mode == RgbProfile::Meter) { prof.mode = RgbProfile::Static; syncRows(); }
         else if (prof.mode == RgbProfile::Off || prof.mode == RgbProfile::Meter) { prof.mode = RgbProfile::Static; syncRows(); }
     }
     changed();
@@ -283,4 +340,4 @@ void LightingPage::paintTool(int tool) {
     prof.zones = z; prof.mode = RgbProfile::Zones; syncRows(); changed();
 }
 
-void LightingPage::changed() { kb->update(); colour->update(); if (onProfile) onProfile(prof); }
+void LightingPage::changed() { kb->update(); colour->update(); refreshStatus(); if (onProfile) onProfile(prof); }
