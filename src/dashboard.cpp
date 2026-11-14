@@ -31,6 +31,7 @@ QString readFile(const QString &path) { QFile f(path); if (!f.open(QIODevice::Re
 qint64 readInt(const QString &path, qint64 def = -1) { bool ok; qint64 v = readFile(path).toLongLong(&ok); return ok ? v : def; }
 QColor mix(const QColor &a, const QColor &b, double t) { t = qBound(0.0, t, 1.0); return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t, a.greenF() + (b.greenF() - a.greenF()) * t, a.blueF() + (b.blueF() - a.blueF()) * t, a.alphaF() + (b.alphaF() - a.alphaF()) * t); }
 QColor alpha(QColor c, double a) { c.setAlphaF(a); return c; }
+double ease(double dt, double tau) { return 1 - exp(-dt / tau); }      // frame-rate independent smoothing factor
 double easeOut(double t) { t = qBound(0.0, t, 1.0); return 1 - pow(1 - t, 3); }
 
 // panel outline with two cut corners (top-right, bottom-left) - the one shape the whole UI is built from
@@ -64,7 +65,7 @@ class Panel : public QWidget {
 public:
     Panel(const QString &idx, const QString &title, QWidget *p) : QWidget(p), idx(idx), title(title) { setMouseTracking(true); }
     QString idx, title; double reveal = 0, hov = 0, delay = 0; bool hovering = false;
-    void tick(double clock) { reveal = easeOut((clock - delay) / 0.38); hov += ((hovering ? 1 : 0) - hov) * 0.22; update(); }
+    bool tick(double clock, double dt) { reveal = easeOut((clock - delay) / 0.38); double old = hov; hov += ((hovering ? 1 : 0) - hov) * ease(dt, 0.07); return reveal < 1 || fabs(hov - old) > 0.002; }
 protected:
     virtual void paintBody(QPainter &, const QRectF &) = 0;
     void enterEvent(QEnterEvent *) override { hovering = true; }
@@ -89,7 +90,7 @@ class ThermalPanel : public Panel {
 public:
     ThermalPanel(QWidget *p) : Panel("01", "THERMAL", p) { setMinimumHeight(272); }
     double cpu = 0, gpu = 0, cpuPeak = 0, gpuPeak = 0, cpuS = 0, gpuS = 0; bool hasGpu = false, gpuOff = false, hasNvme = false; int nvme = 0; QString cpuName, gpuName;
-    void step() { cpuS += (cpu - cpuS) * 0.2; gpuS += (gpu - gpuS) * 0.2; }
+    bool step(double dt) { double a = cpuS, b = gpuS; cpuS += (cpu - cpuS) * ease(dt, 0.12); gpuS += (gpu - gpuS) * ease(dt, 0.12); if (fabs(cpu - cpuS) < 0.05) cpuS = cpu; if (fabs(gpu - gpuS) < 0.05) gpuS = gpu; return a != cpuS || b != gpuS; }
 protected:
     void row(QPainter &p, const QRectF &r, const QString &name, const QString &sub, double v, double peak, bool off) {
         p.setFont(fnt(RAJ, 15, QFont::DemiBold, 2)); p.setPen(kText); p.drawText(QRectF(r.left(), r.top(), 80, 18), Qt::AlignLeft, name);
@@ -122,14 +123,19 @@ public:
     FanPanel(QWidget *p) : Panel("02", "COOLING", p) { setMinimumHeight(272); }
     int pct[2] = {-1, -1}, rpm[2] = {0, 0}; double shown[2] = {0, 0}, speed[2] = {0, 0}, rot[2] = {0, 0}; bool two = false, boost = false, boostOk = true;
     std::function<void(bool)> onBoost;
-    void step() {
+    // Rotation is integrated from real elapsed time (deg/s), so it is perfectly smooth whatever the timer does.
+    // Returns true when the bar (not just the glyph) changed and the whole panel needs repainting.
+    bool step(double dt) {
+        bool bars = false;
         for (int i = 0; i < 2; ++i) {
-            shown[i] += (qMax(pct[i], 0) - shown[i]) * 0.12;
-            double want = shown[i] < 1 ? 0 : 1.5 + shown[i] * 0.2;
-            speed[i] += (want - speed[i]) * 0.05;                       // inertia: spins up and coasts down like a real fan
-            rot[i] = fmod(rot[i] + speed[i], 360.0);
+            double before = shown[i]; shown[i] += (qMax(pct[i], 0) - shown[i]) * ease(dt, 0.35); if (fabs(shown[i] - qMax(pct[i], 0)) < 0.05) shown[i] = qMax(pct[i], 0); bars |= fabs(shown[i] - before) > 0.0;
+            double want = shown[i] < 1 ? 0 : 60 + shown[i] * 6.0;          // deg/s: ~60 at idle .. ~660 at full tilt (below the wagon-wheel limit for 7 blades)
+            speed[i] += (want - speed[i]) * ease(dt, 0.9);                   // inertia: spins up and coasts down over ~a second
+            rot[i] = fmod(rot[i] + speed[i] * dt, 360.0);
         }
+        return bars;
     }
+    QRegion glyphRegion() const { QRegion r; for (int i = 0; i < (two ? 2 : 1); ++i) r += QRect(int(19 + 30 - 33), int(39 + (two ? 0 : 6) + i * 96 + 36 - 33), 66, 66); return r; }
 protected:
     QRectF btn;
     void mousePressEvent(QMouseEvent *e) override { if (boostOk && btn.contains(e->position()) && onBoost) onBoost(!boost); }
@@ -170,7 +176,7 @@ public:
     PowerPanel(QWidget *p) : Panel("03", "POWER", p) { setMinimumHeight(272); }
     int cap = 0, limit = 100; double shown = 0; bool charging = false, limitOk = true; QString state, draw, eta, health, cycles; bool ac = false;
     std::function<void(int)> onLimit;
-    void step() { shown += (cap - shown) * 0.1; }
+    bool step(double dt) { double a = shown; shown += (cap - shown) * ease(dt, 0.4); if (fabs(cap - shown) < 0.05) shown = cap; return a != shown; }
 protected:
     QRectF chips[3];
     void mousePressEvent(QMouseEvent *e) override { if (!limitOk) return; const int v[3] = {60, 80, 100}; for (int i = 0; i < 3; ++i) if (chips[i].contains(e->position()) && onLimit) onLimit(v[i]); }
@@ -263,7 +269,7 @@ public:
     std::vector<Item> items; int checked = -1; bool controls = false; double delay = 0, reveal = 0; std::function<void(int)> onClick;
     std::vector<double> hov, press;
     void setItems(std::vector<Item> v) { items = std::move(v); hov.assign(items.size(), 0); press.assign(items.size(), 0); update(); }
-    void tick(double clock) { reveal = easeOut((clock - delay) / 0.38); for (size_t i = 0; i < items.size(); ++i) { hov[i] += (((int) i == hot ? 1 : 0) - hov[i]) * 0.25; press[i] *= 0.8; } update(); }
+    bool tick(double clock, double dt) { reveal = easeOut((clock - delay) / 0.38); bool act = reveal < 1; for (size_t i = 0; i < items.size(); ++i) { double h = hov[i]; hov[i] += (((int) i == hot ? 1 : 0) - hov[i]) * ease(dt, 0.07); press[i] *= exp(-dt / 0.1); act |= fabs(hov[i] - h) > 0.002 || press[i] > 0.01; } return act; }
 protected:
     int hot = -1; bool checkable;
     int visibleCount() const { int n = 0; for (auto &i : items) n += i.visible; return n; }
@@ -297,7 +303,7 @@ class HeaderBar : public QWidget {
 public:
     HeaderBar(QWidget *p) : QWidget(p) { setFixedHeight(66); }
     QString title, sub, left, right; bool leftOk = true, rightOk = true; double reveal = 0, delay = 0;
-    void tick(double clock) { reveal = easeOut((clock - delay) / 0.4); update(); }
+    bool tick(double clock, double) { reveal = easeOut((clock - delay) / 0.4); return reveal < 1 || gBoost; }
 protected:
     void paintEvent(QPaintEvent *) override {
         if (reveal <= 0.001) return; QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setOpacity(reveal);
@@ -362,7 +368,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     fans->onBoost = [this](bool on) { fans->boost = on; gBoost = on; emit coolerBoostRequested(on); };
     power->onLimit = [this](int v) { power->limit = v; emit chargeLimitRequested(v); };
 
-    connect(&fastTimer, &QTimer::timeout, this, &DashboardPage::animate); fastTimer.setInterval(33);
+    connect(&fastTimer, &QTimer::timeout, this, &DashboardPage::animate); fastTimer.setInterval(16); fastTimer.setTimerType(Qt::PreciseTimer);
     connect(&slowTimer, &QTimer::timeout, this, &DashboardPage::sample); slowTimer.setInterval(1000);
     setControlsEnabled(false);
 }
@@ -381,7 +387,7 @@ void DashboardPage::setProblem(const QString &text, const QString &button) { ban
 
 void DashboardPage::setControlsEnabled(bool en) { controlsEnabled = en; modes->controls = en; presets->controls = en; for (auto &i : modes->items) i.enabled = en; for (auto &i : presets->items) i.enabled = en; }
 
-void DashboardPage::showEvent(QShowEvent *) { sinceShow.start(); fastTimer.start(); slowTimer.start(); sample(); }   // restarts the entrance animation each time the window opens
+void DashboardPage::showEvent(QShowEvent *) { sinceShow.start(); gClock = 0; fastTimer.start(); slowTimer.start(); sample(); }   // restarts the entrance animation each time the window opens
 void DashboardPage::hideEvent(QHideEvent *) { fastTimer.stop(); slowTimer.stop(); }                               // hidden in the tray = zero CPU
 
 void DashboardPage::retargetAccent() { gAccentTarget = cur.mode >= 0 ? kAccentMode[cur.mode] : kAccentMode[1]; }
@@ -403,11 +409,19 @@ void DashboardPage::setData(const DashData &d) {
 }
 
 void DashboardPage::animate() {
-    gClock = sinceShow.elapsed() / 1000.0;
-    gAccent = mix(gAccent, gAccentTarget, 0.14);                     // accent cross-fades when the mode changes
-    for (Panel *p : std::initializer_list<Panel *>{thermal, fans, power, graph}) p->tick(gClock);
-    header->tick(gClock); modes->tick(gClock); presets->tick(gClock);
-    thermal->step(); fans->step(); power->step();
+    double now = sinceShow.elapsed() / 1000.0, dt = qBound(0.001, now - gClock, 0.05); gClock = now;
+    QColor before = gAccent; gAccent = mix(gAccent, gAccentTarget, ease(dt, 0.12));      // accent cross-fades when the mode changes
+    bool accentMoved = qAbs(before.red() - gAccent.red()) + qAbs(before.green() - gAccent.green()) + qAbs(before.blue() - gAccent.blue()) > 0;
+    if (accentMoved) for (QWidget *w : std::initializer_list<QWidget *>{header, thermal, fans, power, graph, modes, presets}) w->update();
+    // Only repaint what actually changed: panels idle at zero cost, the fan glyphs get a tiny partial repaint at 60 fps.
+    if (thermal->tick(now, dt) | thermal->step(dt)) thermal->update();
+    if (power->tick(now, dt) | power->step(dt)) power->update();
+    if (graph->tick(now, dt)) graph->update();
+    bool fanFull = fans->tick(now, dt); fanFull |= fans->step(dt);
+    if (fanFull) fans->update(); else fans->update(fans->glyphRegion());
+    if (header->tick(now, dt)) header->update();
+    if (modes->tick(now, dt)) modes->update();
+    if (presets->tick(now, dt)) presets->update();
 }
 
 void DashboardPage::sample() {
@@ -440,4 +454,6 @@ void DashboardPage::sample() {
     double mt = kb("MemTotal"), ma = kb("MemAvailable");
     QString extra = QString("CPU %1 · %2 GHz · RAM %3/%4 GB").arg(load.isEmpty() ? "—" : load).arg(fn ? fsum / fn / 1e6 : 0, 0, 'f', 1).arg((mt - ma) / 1048576, 0, 'f', 1).arg(mt / 1048576, 0, 'f', 0);
     header->sub = QString("%1  ·  EC %2  ·  %3").arg(caps.board.isEmpty() ? "—" : caps.board, caps.fw.isEmpty() ? "n/a" : caps.fw, extra);
+    for (QWidget *w : std::initializer_list<QWidget *>{header, thermal, power, graph}) w->update();     // new text/values once a second
+    fans->update();
 }
