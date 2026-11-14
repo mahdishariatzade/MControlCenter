@@ -200,7 +200,7 @@ MainWindow::MainWindow(QWidget *parent)
         int r0 = dashData.cpuFanRpm, r1 = dashData.gpuFanRpm; if (sn.msiEc) { dashData = sn.d; dashData.cpuFanRpm = r0; dashData.gpuFanRpm = r1; }
         lastGpuSupported = sn.gpuSupported; lastGpuMode = sn.gpuMode;
         lastGpuState = !sn.gpuSupported ? "none" : (sn.gpuDriver == "none" || sn.gpuDriver.isEmpty()) ? "off" : sn.gpuPower.startsWith("D3") ? "asleep" : "awake";
-        dashboard->applySnapshot(sn); syncPages(sn); thermalWatch(sn);
+        dashboard->applySnapshot(sn); syncPages(sn); thermalWatch(sn); batteryExercise(sn);
         { bool low = sn.cap > 0 && sn.cap <= 15 && !sn.ac && sn.status == "Discharging"; bool changedState = low != rgbLowBat || (rgbFollowMode && sn.msiEc && sn.d.mode != rgbLastMode);
           rgbLowBat = low; rgbBattery = sn.cap; if (sn.msiEc) rgbLastMode = sn.d.mode; if (changedState || rgbUser.mode == RgbProfile::Meter) rgbPush(); }
     });
@@ -1268,6 +1268,8 @@ void MainWindow::buildPages() {
     controlsPage->onGpuMode = [this](bool on) { setGpuBootMode(on); };
     controlsPage->onReboot = [] { QDBusInterface("org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", QDBusConnection::systemBus()).call("Reboot", true); };
     batteryPage->onLimit = [this](int v) { setChargeLimit(v); };
+    batteryPage->onExercise = [this](int what, int value) { exerciseAction(what, value); };
+    exerciseLoad(); batteryPage->setExercise(exerciseView());
     fanPage->onAdvanced = [this](bool on) { ui->advancedFanControlCheckBox->setChecked(on); fanPage->setAdvanced(on); };
     fanPage->onCurveEdited = [this](int fan, const QVector<int> &sp, const QVector<int> &tp) { writeFanToUi(fan, sp, tp); };
     fanPage->onApply = [this] { ui->fanSpeedApplyButton->click(); syncFanEditor(); };
@@ -1436,4 +1438,55 @@ void MainWindow::rgbReset() {
     rgbUser = RgbProfile(); rgbChosen = false; rgbFollowMode = rgbFlashThermal = rgbPulseLow = rgbOffOnLock = false; rgbLastSent = QJsonObject(); rgbSave();
     if (lightingPage) { lightingPage->setProfile(rgbUser); lightingPage->setFollow(false, false, false, false); lightingPage->setChosen(false); }
     QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection);
+}
+
+// ───────────────────────────── battery exercise ─────────────────────────────
+static const int kExDays[3] = {14, 30, 60}, kExDepth[3] = {50, 40, 30};
+static qint64 secsNow() { return QDateTime::currentSecsSinceEpoch(); }
+
+void MainWindow::exerciseLoad() {
+    Settings s; exEnabled = s.getValue("Battery/exercise").toBool(); exActive = s.getValue("Battery/active").toBool();
+    exInterval = s.isValueExist("Battery/interval") ? qBound(0, s.getValue("Battery/interval").toInt(), 2) : 1; exDepth = s.isValueExist("Battery/depth") ? qBound(0, s.getValue("Battery/depth").toInt(), 2) : 1;
+    exLast = s.getValue("Battery/last").toLongLong(); exLow = s.isValueExist("Battery/low") ? s.getValue("Battery/low").toInt() : 100; exLowAt = s.getValue("Battery/lowAt").toLongLong();
+}
+void MainWindow::exerciseSave() {
+    Settings::setValue("Battery/exercise", exEnabled); Settings::setValue("Battery/active", exActive); Settings::setValue("Battery/interval", exInterval); Settings::setValue("Battery/depth", exDepth);
+    Settings::setValue("Battery/last", qlonglong(exLast)); Settings::setValue("Battery/low", exLow); Settings::setValue("Battery/lowAt", qlonglong(exLowAt));
+}
+ExerciseView MainWindow::exerciseView() const {
+    ExerciseView v; v.enabled = exEnabled; v.interval = exInterval; v.depth = exDepth; v.active = exActive; v.cap = rgbBattery; v.target = kExDepth[exDepth];
+    v.last = exLast ? QDateTime::fromSecsSinceEpoch(exLast).toString("d MMM yyyy") : QString("never");
+    const qint64 due = (exLast ? exLast : secsNow()) + kExDays[exInterval] * 86400LL; v.next = QDateTime::fromSecsSinceEpoch(due).toString("d MMM yyyy"); v.due = exEnabled && exLast && secsNow() >= due;
+    v.lowest = (exLowAt && secsNow() - exLowAt < 30 * 86400LL) ? QString("%1 %").arg(exLow) : QString("no discharge yet");
+    return v;
+}
+void MainWindow::exerciseAction(int what, int value) {
+    const qint64 now = secsNow();
+    switch (what) {
+        case 0: exEnabled = value != 0; if (exEnabled && !exLast) exLast = now; if (!exEnabled) exActive = false; break;       // the clock starts when the feature is switched on
+        case 1: exInterval = qBound(0, value, 2); break;
+        case 2: exDepth = qBound(0, value, 2); break;
+        case 3: exActive = true; exWarnedNear = exWarnedLow = false;
+                if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery exercise started. Unplug the charger and use the laptop normally. I will tell you at %1 %.").arg(kExDepth[exDepth]), QSystemTrayIcon::Information, 8000); break;
+        case 4: exActive = false; break;
+    }
+    exerciseSave(); batteryPage->setExercise(exerciseView());
+}
+// Called once per sensor snapshot: records how deep the battery really went, and nudges only when a cycle is genuinely overdue.
+void MainWindow::batteryExercise(const Snapshot &sn) {
+    if (sn.cap <= 0) return; const qint64 now = secsNow(); const bool onBat = sn.status == "Discharging";
+    if (onBat && (exLowAt == 0 || now - exLowAt > 30 * 86400LL || sn.cap < exLow)) { exLow = sn.cap; exLowAt = now; exerciseSave(); }          // lowest level reached in the last 30 days
+    if (exEnabled) {
+        const int depth = kExDepth[exDepth];
+        if (onBat && sn.cap <= depth && (exActive || now - exLast > 6 * 3600)) {                                                              // done: guided, or you simply ran it down yourself
+            exLast = now; exActive = false; exerciseSave();
+            if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery exercise complete: it reached %1 %. Plug the charger in; it will recharge to your normal limit.").arg(sn.cap), QSystemTrayIcon::Information, 10000);
+        } else if (exActive && onBat && sn.cap <= depth + 8 && !exWarnedNear) { exWarnedNear = true; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Almost there: %1 %. Keep going to %2 %.").arg(sn.cap).arg(depth), QSystemTrayIcon::Information, 6000); }
+        else if (onBat && sn.cap <= 15 && !exWarnedLow) { exWarnedLow = true; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery at %1 %: plug the charger in now.").arg(sn.cap), QSystemTrayIcon::Warning, 10000); }
+        else if (!onBat) exWarnedLow = false;
+        if (!exActive && exLast && now >= exLast + kExDays[exInterval] * 86400LL && sn.ac && now - exLastNotify > 86400) {                    // overdue: one gentle reminder a day, only while plugged in
+            exLastNotify = now; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery exercise is due. Whenever it suits you, unplug and use the laptop down to %1 %. Open Battery to start a guided run.").arg(depth), QSystemTrayIcon::Information, 10000);
+        }
+    }
+    batteryPage->setExercise(exerciseView());
 }

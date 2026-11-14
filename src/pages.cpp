@@ -3,6 +3,8 @@
 #include "uikit.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QScrollArea>
 
 using namespace kit;
 
@@ -64,15 +66,39 @@ protected:
 };
 
 BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
-    auto *root = new QHBoxLayout(this); root->setContentsMargins(18, 16, 18, 16); root->setSpacing(10);
-    charge = new ChargePanel(this); info = new RowsPanel("02", "BATTERY", this);
+    auto *outer = new QVBoxLayout(this); outer->setContentsMargins(0, 0, 0, 0);
+    auto *scroll = new QScrollArea(this); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame); scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet("QScrollArea { background: transparent; border: none; } QScrollArea > QWidget > QWidget { background: transparent; }");
+    auto *content = new QWidget; scroll->setWidget(content); outer->addWidget(scroll);
+    auto *grid = new QGridLayout(content); grid->setContentsMargins(18, 16, 18, 16); grid->setSpacing(10);
+    charge = new ChargePanel(content); info = new RowsPanel("02", "BATTERY", content); exercise = new RowsPanel("03", "BATTERY EXERCISE", content);
     charge->onCommit = [this](int v) { if (onLimit) onLimit(v); };
     charge->setFixedHeight(300);
-    auto *l = new QVBoxLayout; l->addWidget(charge); l->addStretch(1); auto *r = new QVBoxLayout; r->addWidget(info); r->addStretch(1);
-    root->addLayout(l, 3); root->addLayout(r, 2); adopt(charge, 0.0); adopt(info, 0.1);
+    grid->addWidget(charge, 0, 0); grid->addWidget(info, 0, 1); grid->addWidget(exercise, 1, 0, 1, 2); grid->setColumnStretch(0, 3); grid->setColumnStretch(1, 2); grid->setRowStretch(2, 1);
+    adopt(charge, 0.0); adopt(info, 0.1); adopt(exercise, 0.2);
     for (auto [l, k] : std::vector<std::pair<QString, int>>{{"Status", 0}, {"Charge", 1}, {"Health", 2}, {"Cycles", 3}, {"Draw", 4}, {"Time", 5}}) { Row r; r.type = Row::Info; r.label = l; info->rows.push_back(r); (void) k; }
     Row g; g.type = Row::Gap; info->rows.push_back(g);
     Row t; t.type = Row::Text; t.label = "Tip: 60 % is the kindest setting for a laptop that lives on its charger. Choose 100 % before a trip. Changes apply instantly."; info->rows.push_back(t); info->relayout();
+
+    // battery exercise: remind me to run one real discharge/recharge cycle now and then
+    { Row r; r.type = Row::Switch; r.label = "Remind me to exercise the battery"; r.sub = "A battery that never moves from one level slowly loses accuracy"; r.click = [this] { if (onExercise) onExercise(0, exercise->rows[0].on ? 0 : 1); }; exercise->rows.push_back(r); }
+    { Row r; r.type = Row::Segment; r.label = "How often"; r.opts = {"Every 2 weeks", "Monthly", "Every 2 months"}; r.pick = [this](int i) { if (onExercise) onExercise(1, i); }; exercise->rows.push_back(r); }
+    { Row r; r.type = Row::Segment; r.label = "Discharge down to"; r.opts = {"50 %", "40 %", "30 %"}; r.pick = [this](int i) { if (onExercise) onExercise(2, i); }; exercise->rows.push_back(r); }
+    for (const char *l : {"Last exercise", "Next due", "Lowest in 30 days"}) { Row r; r.type = Row::Info; r.label = l; exercise->rows.push_back(r); }
+    { Row r; r.type = Row::Text; r.accent = true; exercise->rows.push_back(r); }
+    { Row r; r.type = Row::Button; r.label = "Start guided exercise"; r.accent = true; r.click = [this] { if (onExercise) onExercise(exercise->rows[7].label.startsWith("Cancel") ? 4 : 3, 0); }; exercise->rows.push_back(r); }
+    { Row r; r.type = Row::Text; r.label = "How it works: this laptop cannot discharge its battery while the charger is plugged in, so an exercise means unplugging once and using it normally until it reaches the level above. Then plug in: it recharges to your normal limit. If you happen to run on battery that far on your own, it counts automatically."; exercise->rows.push_back(r); }
+    exercise->relayout();
+}
+void BatteryPage::setExercise(const ExerciseView &v) {
+    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10").arg(v.enabled).arg(v.interval).arg(v.depth).arg(v.active).arg(v.due).arg(v.last, v.next, v.lowest).arg(v.cap).arg(v.target);
+    if (sig == exSig) return; exSig = sig;                       // only touch the layout when something visible changed
+    auto &R = exercise->rows; R[0].on = v.enabled; for (int i : {1, 2, 3, 4, 5, 6, 7}) R[i].visible = v.enabled; R[1].sel = v.interval; R[2].sel = v.depth;
+    R[3].value = v.last; R[4].value = v.next; R[5].value = v.lowest;
+    R[6].label = v.active ? QString("EXERCISE IN PROGRESS: unplug the charger and keep working. Now %1 %, target %2 %. I will tell you when to plug back in.").arg(v.cap).arg(v.target)
+                          : v.due ? QString("DUE NOW: whenever it suits you, unplug the charger and use the laptop down to %1 %.").arg(v.target) : QString("All good: no exercise needed yet.");
+    R[7].label = v.active ? "Cancel exercise" : "Start guided exercise"; R[7].accent = !v.active;
+    exercise->relayout(); exercise->update(); kick();
 }
 void BatteryPage::setLimit(int percent, bool supported) { charge->supported = supported; charge->setValue(percent); charge->update(); }
 void BatteryPage::setHealth(const QString &status, const QString &health, const QString &cycles, const QString &draw, const QString &eta, int cap) {

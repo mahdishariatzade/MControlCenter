@@ -44,14 +44,17 @@ private:
     QString gReason, gDriver, gPower; qint64 gA = 0, gS = 0;
 };
 
+struct ExerciseView { bool enabled = false; int interval = 1, depth = 1; bool active = false, due = false; QString last = "never", next = "—", lowest = "—"; int cap = 0, target = 40; };
 class BatteryPage : public AnimPage {
 public:
     explicit BatteryPage(QWidget *p);
+    void setExercise(const ExerciseView &v);
+    std::function<void(int, int)> onExercise;            // 0 enable(1/0), 1 interval index, 2 depth index, 3 start, 4 cancel
     void setLimit(int percent, bool supported);
     void setHealth(const QString &status, const QString &health, const QString &cycles, const QString &draw, const QString &eta, int cap);
     std::function<void(int)> onLimit;
 private:
-    ChargePanel *charge; kit::RowsPanel *info;
+    ChargePanel *charge; kit::RowsPanel *info, *exercise; QString exSig;
 };
 
 class FanPage : public AnimPage {

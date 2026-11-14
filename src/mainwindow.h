@@ -59,6 +59,9 @@ private:
     bool rgbCalibrating = false; int rgbBattery = 100; QJsonObject rgbLastSent;
     RgbProfile rgbUser; bool rgbChosen = false, rgbFollowMode = false, rgbFlashThermal = false, rgbPulseLow = false, rgbOffOnLock = false, rgbLocked = false, rgbLowBat = false, rgbPresent = false; int rgbLastMode = -2;
     RgbProfile rgbEffective() const; void rgbPush(); void rgbSave(); void rgbLoad(); void rgbReset(); void onScreenLocked(bool locked);
+    // battery exercise (guided real discharge cycle; this laptop cannot discharge on AC)
+    bool exEnabled = false, exActive = false, exWarnedNear = false, exWarnedLow = false; int exInterval = 1, exDepth = 1; qint64 exLast = 0, exLowAt = 0, exLastNotify = 0; int exLow = 100;
+    void exerciseLoad(); void exerciseSave(); void batteryExercise(const Snapshot &s); void exerciseAction(int what, int value); ExerciseView exerciseView() const;
     void buildPages();
     void syncPages(const Snapshot &s);
     void syncFanEditor(); void writeFanToUi(int fan, const QVector<int> &speeds, const QVector<int> &temps);
