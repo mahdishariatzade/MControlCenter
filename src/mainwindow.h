@@ -28,6 +28,7 @@
 #include "dashboard.h"
 #include "bridge.h"
 #include "sensors.h"
+#include "pages.h"
 #include <QThread>
 
 QT_BEGIN_NAMESPACE
@@ -49,6 +50,12 @@ private:
     ControlBridge *bridge = nullptr;
     DashData dashData;
     SensorWorker *sensors = nullptr; QThread sensorThread;
+    ControlsPage *controlsPage = nullptr; BatteryPage *batteryPage = nullptr; FanPage *fanPage = nullptr; AboutPage *aboutPage = nullptr;
+    void buildPages();
+    void syncPages(const Snapshot &s);
+    void syncFanEditor(); void writeFanToUi(int fan, const QVector<int> &speeds, const QVector<int> &temps);
+    void setGpuBootMode(bool on);
+    void aboutLink(int which);
     void pushDashboard();
     void probeCaps();
     void checkDriver();

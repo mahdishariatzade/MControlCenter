@@ -26,6 +26,16 @@
 #include <QJsonDocument>
 #include <QFile>
 #include <QProcess>
+#include <QEventLoop>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QDBusInterface>
+#include <QSignalBlocker>
+#include <QSlider>
+#include <QSpinBox>
+#include <QSysInfo>
 #include <QElapsedTimer>
 #include <QRegularExpression>
 #include <QDBusConnection>
@@ -179,7 +189,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&sensorThread, &QThread::finished, sensors, &QObject::deleteLater);
     connect(sensors, &SensorWorker::snapshot, this, [this](const Snapshot &sn) {
         int r0 = dashData.cpuFanRpm, r1 = dashData.gpuFanRpm; if (sn.msiEc) { dashData = sn.d; dashData.cpuFanRpm = r0; dashData.gpuFanRpm = r1; }
-        dashboard->applySnapshot(sn);
+        dashboard->applySnapshot(sn); syncPages(sn);
     });
     sensorThread.start();
     bridge = new ControlBridge(this);
@@ -191,8 +201,7 @@ MainWindow::MainWindow(QWidget *parent)
     QDBusConnection::sessionBus().registerObject("/Control", bridge, QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals);
 
     ui->tabWidget->tabBar()->setExpanding(true);
-    // Disable debug tab (index shifted by one: the Dashboard is tab 0)
-    ui->tabWidget->setTabVisible(6, false);
+    buildPages();
     setTabsEnabled(false);
 
     connect(dashboard, &DashboardPage::fixRequested, this, &MainWindow::runDoctorFix);
@@ -217,7 +226,11 @@ MainWindow::MainWindow(QWidget *parent)
     if (const char *shot = getenv("MCC_SHOT")) {            // dev only: render every tab to PNGs and quit
         QString prefix = QString::fromUtf8(shot); resize(1100, 760); show();
         QTimer::singleShot(2500, this, [this, prefix] {
-                        for (int i = 0; i < ui->tabWidget->count(); ++i) { if (!ui->tabWidget->isTabVisible(i)) continue; ui->tabWidget->setCurrentIndex(i); QCoreApplication::processEvents(); grab().save(QString("%1_%2.png").arg(prefix).arg(i)); }
+            for (int i = 0; i < ui->tabWidget->count(); ++i) {
+                if (!ui->tabWidget->isTabVisible(i)) continue; ui->tabWidget->setCurrentIndex(i);
+                QEventLoop loop; QTimer::singleShot(1300, &loop, &QEventLoop::quit); loop.exec();            // let the entrance animation finish
+                grab().save(QString("%1_%2.png").arg(prefix).arg(i));
+            }
             QCoreApplication::quit();
         });
     }
@@ -240,6 +253,7 @@ void MainWindow::setUpdateDataError(bool error) {
 
 void MainWindow::setTabsEnabled(bool enabled) {
     if (dashboard) dashboard->setControlsEnabled(enabled);
+    for (QWidget *w : std::initializer_list<QWidget *>{controlsPage, batteryPage, fanPage}) if (w) w->setEnabled(enabled);
     ui->overviewTab->setEnabled(enabled);
     ui->modeFormWidget->setEnabled(enabled);
     ui->batteryTab->setEnabled(enabled);
@@ -326,7 +340,7 @@ void MainWindow::loadConfigs() {
         updateKeyboardBrightness();
     } else {
         ui->keyboardBrightnessSlider->setEnabled(false);
-        ui->tabWidget->removeTab(4);
+        ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->keyboardTab));
     }
 
     if (operate.isUsbPowerShareSupport()) {
@@ -1150,7 +1164,14 @@ void MainWindow::probeCaps() {
                 if (m.hasMatch()) { QString dev = m.captured(4); int a = dev.indexOf('['), b = dev.indexOf(']'); c.gpuName = (a >= 0 && b > a ? dev.mid(a + 1, b - a - 1) : dev).replace("GeForce ", "").replace("Laptop GPU", "").simplified(); break; }
             }
     }
-    dashboard->setCaps(c);
+    c.webcam = msiEcPresent() ? QFile::exists("/sys/devices/platform/msi-ec/webcam") : operate.isWebCamOffSupport();
+    c.fnSwap = msiEcPresent() ? QFile::exists("/sys/devices/platform/msi-ec/fn_key") : true;
+    c.usbShare = QFile::exists("/sys/devices/platform/msi-ec/usb_share") || operate.isUsbPowerShareSupport();
+    dashboard->setCaps(c); controlsPage->setCaps(c); fanPage->setCaps(c);
+    aboutPage->setInfo(MControlCenter_VERSION, QT_VERSION_STR, QString("%1 · %2").arg(c.fw, QString::fromStdString(operate.getEcBuild())),
+                       msiEcPresent() ? QString("msi-ec %1").arg(slurp("/sys/module/msi_ec/version").isEmpty() ? QString("(DKMS)") : slurp("/sys/module/msi_ec/version")) : QString("not loaded (ec_sys fallback)"),
+                       QSysInfo::kernelVersion(), QString("%1 · %2").arg(qEnvironmentVariable("XDG_CURRENT_DESKTOP", "unknown"), qEnvironmentVariable("XDG_SESSION_TYPE", "unknown")));
+    syncFanEditor();
 }
 
 // Friendly replacement for the old "msi-ec not loaded" dialog: say what is wrong and offer the one-click fix.
@@ -1179,4 +1200,85 @@ void MainWindow::runDoctorFix() {
         else dashboard->setProblem(tr("Repair did not finish: %1").arg(err.isEmpty() ? tr("authentication cancelled or failed") : err), tr("Try again"));
     });
     pr->start("pkexec", {"/usr/libexec/mcontrolcenter/mcontrolcenter-doctor", "fix"});
+}
+
+// ───────────────────────────── pages: wiring between the new UI and the existing backend slots ─────────────────────────────
+void MainWindow::buildPages() {
+    controlsPage = new ControlsPage(this); batteryPage = new BatteryPage(this); fanPage = new FanPage(this); aboutPage = new AboutPage(this);
+    auto swap = [this](QWidget *old, QWidget *neu, const QString &title) {      // the old widgets stay alive (hidden) as the backend the slots already know
+        int i = ui->tabWidget->indexOf(old); if (i < 0) return; ui->tabWidget->removeTab(i); ui->tabWidget->insertTab(i, neu, title); };
+    swap(ui->overviewTab, controlsPage, tr("Controls")); swap(ui->batteryTab, batteryPage, tr("Battery")); swap(ui->fanControlTab, fanPage, tr("Fans")); swap(ui->aboutTab, aboutPage, tr("About"));
+    ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->debugTab));
+    ui->tabWidget->setCurrentIndex(0);
+
+    controlsPage->onSwitch = [this](ControlsPage::Sw s) {
+        QCheckBox *c = s == ControlsPage::Webcam ? ui->webCamCheckBox : s == ControlsPage::FnSwap ? ui->fnSuperSwapCheckBox : s == ControlsPage::UsbShare ? ui->usbPowerShareCheckBox : ui->coolerBoostCheckBox;
+        if (c->isEnabled()) { c->click(); controlsPage->setSwitch(s, c->isChecked()); } };
+    controlsPage->onFollowPpd = [this](bool on) { if (ui->autoPPDCheckBox->isEnabled()) { ui->autoPPDCheckBox->setChecked(on); syncPages(Snapshot()); } };
+    controlsPage->onAutoAcDc = [this](bool on) { if (ui->autoAcDcProfilesGroupBox->isEnabled()) { ui->autoAcDcProfilesGroupBox->setChecked(on); syncPages(Snapshot()); } };
+    controlsPage->onAcDcMode = [this](bool charger, int i) { (charger ? ui->userModeOnChargerComboBox : ui->userModeOnBatteryComboBox)->setCurrentIndex(i); syncPages(Snapshot()); };
+    controlsPage->onGpuMode = [this](bool on) { setGpuBootMode(on); };
+    controlsPage->onReboot = [] { QDBusInterface("org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", QDBusConnection::systemBus()).call("Reboot", true); };
+    batteryPage->onLimit = [this](int v) { setChargeLimit(v); };
+    fanPage->onAdvanced = [this](bool on) { ui->advancedFanControlCheckBox->setChecked(on); fanPage->setAdvanced(on); };
+    fanPage->onCurveEdited = [this](int fan, const QVector<int> &sp, const QVector<int> &tp) { writeFanToUi(fan, sp, tp); };
+    fanPage->onApply = [this] { ui->fanSpeedApplyButton->click(); syncFanEditor(); };
+    fanPage->onReset = [this] { ui->fanSpeedResetButton->click(); syncFanEditor(); };
+    aboutPage->onLink = [this](int w) { aboutLink(w); };
+}
+
+void MainWindow::syncPages(const Snapshot &s) {
+    if (!controlsPage) return;
+    const bool real = s.hasWebcam || s.hasFn || s.msiEc || s.gpuKnown || s.cap > 0;       // a default-constructed Snapshot only means "re-read the widgets"
+    if (real) {
+        auto sync = [](QCheckBox *c, bool v) { QSignalBlocker b(c); c->setChecked(v); };       // keep the hidden legacy widgets equal to the hardware so click() flips the right way
+        if (s.hasWebcam) { sync(ui->webCamCheckBox, s.webcamOn); controlsPage->setSwitch(ControlsPage::Webcam, s.webcamOn); }
+        if (s.hasFn) { sync(ui->fnSuperSwapCheckBox, s.fnSwapped); controlsPage->setSwitch(ControlsPage::FnSwap, s.fnSwapped); }
+        if (s.hasUsb) { sync(ui->usbPowerShareCheckBox, s.usbOn); controlsPage->setSwitch(ControlsPage::UsbShare, s.usbOn); }
+        if (s.msiEc) { sync(ui->coolerBoostCheckBox, s.d.coolerBoost); controlsPage->setSwitch(ControlsPage::Boost, s.d.coolerBoost); }
+        controlsPage->setGpu(s.gpuKnown, s.gpuSupported, s.gpuReason, s.gpuDriver, s.gpuPower, s.gpuMode, s.gpuActive, s.gpuSusp);
+        auto pt = dashboard->powerText();
+        batteryPage->setLimit(s.d.chargeLimit, ui->batteryTab->isEnabled() || msiEcPresent());
+        batteryPage->setHealth(pt.state, pt.health, pt.cycles, pt.draw, pt.eta, s.cap);
+        fanPage->setLive(s.d.cpuTemp, s.d.cpuFanPct, qMax(s.d.gpuTemp, 0), s.d.gpuFanPct);
+    }
+    const int m[4] = {0, 1, 2, 3};
+    controlsPage->setProfileState(ui->autoPPDCheckBox->isChecked(), ui->autoAcDcProfilesGroupBox->isChecked(), m[qBound(0, ui->userModeOnChargerComboBox->currentIndex(), 3)], m[qBound(0, ui->userModeOnBatteryComboBox->currentIndex(), 3)]);
+    fanPage->setAdvanced(ui->advancedFanControlCheckBox->isChecked());
+    fanPage->setDirty(ui->fanSpeedApplyButton->isEnabled());
+}
+
+void MainWindow::syncFanEditor() {
+    if (!fanPage) return;
+    for (int fan = 1; fan <= 2; ++fan) {
+        QVector<int> sp, tp;
+        for (int i = 1; i <= 7; ++i) if (auto *sl = findChild<QSlider *>(QString("fan%1Speed%2Slider").arg(fan).arg(i))) sp << sl->value();
+        for (int i = 2; i <= 7; ++i) if (auto *sb = findChild<QSpinBox *>(QString("fan%1Speed%2TempSpinBox").arg(fan).arg(i))) tp << sb->value();
+        if (sp.size() == 7 && tp.size() == 6) fanPage->setCurve(fan - 1, sp, tp);
+    }
+}
+
+void MainWindow::writeFanToUi(int fan, const QVector<int> &sp, const QVector<int> &tp) {
+    for (int i = 0; i < sp.size(); ++i) if (auto *sl = findChild<QSlider *>(QString("fan%1Speed%2Slider").arg(fan + 1).arg(i + 1))) sl->setValue(sp[i]);
+    for (int i = 0; i < tp.size(); ++i) if (auto *sb = findChild<QSpinBox *>(QString("fan%1Speed%2TempSpinBox").arg(fan + 1).arg(i + 2))) sb->setValue(tp[i]);
+}
+
+void MainWindow::setGpuBootMode(bool on) {
+    const QString helper = "/usr/libexec/mcontrolcenter/mcontrolcenter-gpu";
+    if (!QFile::exists(helper)) { controlsPage->setGpuBusy(tr("The GPU helper is not installed. Re-run install.sh.")); return; }
+    controlsPage->setGpuBusy(tr("Applying: rebuilding the boot image. This can take a minute..."));
+    auto *pr = new QProcess(this);
+    connect(pr, &QProcess::finished, this, [this, pr](int code, QProcess::ExitStatus) {
+        const QString err = QString::fromUtf8(pr->readAllStandardError()).trimmed().split('\n').last(); pr->deleteLater();
+        controlsPage->setGpuBusy(code == 0 ? QString() : tr("Not changed: %1").arg(err.isEmpty() ? tr("authentication cancelled or failed") : err)); });
+    pr->start("pkexec", {helper, "set", on ? "on" : "off"});
+}
+
+void MainWindow::aboutLink(int w) {
+    static const char *urls[3] = {"https://github.com/p34t1k/MControlCenter", "https://github.com/dmitry-s93/MControlCenter", "https://github.com/p34t1k/MControlCenter/issues/new/choose"};
+    if (w < 3) { QDesktopServices::openUrl(QUrl(urls[w])); return; }
+    QString doctor = "/usr/libexec/mcontrolcenter/mcontrolcenter-doctor"; if (!QFile::exists(doctor)) doctor = QCoreApplication::applicationDirPath() + "/../scripts/mcontrolcenter-doctor";
+    QProcess pr; pr.start(doctor, {"report"}); pr.waitForFinished(8000);
+    QGuiApplication::clipboard()->setText(QString::fromUtf8(pr.readAllStandardOutput()));
+    if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Hardware report copied to the clipboard. Paste it into a GitHub issue."), QSystemTrayIcon::Information, 4000);
 }

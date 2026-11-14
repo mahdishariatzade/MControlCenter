@@ -21,6 +21,8 @@ persists it. The app shows a one-click "Fix it now" banner instead of an error d
 
 - **Adapts to your MSI laptop** - what the Dashboard shows comes from the capabilities msi-ec reports (shift modes, fan modes, cooler boost, GPU sensor, second fan, charge limit). Missing features simply disappear.
 - **Dashboard** - telemetry panels with LED-style segmented meters and peak-hold marks, rotating fan glyphs with inertia, battery meter with charge-limit notch, 3-minute interactive graph (hover for a read-out), mode strip, one-touch presets (Gaming / Work / Night / Travel). One accent colour follows the active mode; Cooler Boost shows a hazard strip.
+- **Every page redesigned** in the same language: Controls (switches, auto-profile, GPU boot mode), Battery (draggable charge limit), Fans (drag-to-edit stepped fan curve with a live "now" marker), About.
+- **Discrete GPU boot mode** (NVIDIA hybrid laptops): keeps the dGPU driverless so it sleeps in D3cold (best battery, quietest fans), applied at next boot and reversible; shown only where it is safe. Not a hardware MUX (that is a BIOS setting).
 - **Session D-Bus API** `io.github.dmitry_s93.MControlCenter` at `/Control`: `State` (JSON), `SetMode turbo|balanced|silent|eco`, `SetCoolerBoost`, `SetChargeLimit`, `ShowWindow`.
 - **KDE integration** - two-way sync with the power-profiles-daemon slider, plus `plasma/local.battery-msi`: the Power & Battery popup with the MSI controls built in.
 - Developed on an MSI Crosshair 16 HX AI (MS-15P4, EC 15P4EMS1.105), msi-ec 0.13, Kali + Plasma 6.7. **Other MSI models should work but are untested - please open an issue with your model and what the Dashboard shows.**

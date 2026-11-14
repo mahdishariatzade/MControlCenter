@@ -11,6 +11,8 @@ struct Snapshot {
     DashData d;                 // temps, fan %, mode, cooler boost, charge limit (from msi-ec sysfs)
     bool msiEc = false;         // false: the msi-ec driver is absent, the GUI thread falls back to the ec_sys path
     int cap = 0; QString status; double volts = 0, currentUa = 0, chargeNow = 0, chargeFull = 0, chargeDesign = 0; qint64 cycles = 0; bool ac = false;
+    bool hasWebcam = false, webcamOn = false, hasFn = false, fnSwapped = false, hasUsb = false, usbOn = false;
+    bool gpuKnown = false, gpuSupported = false; QString gpuReason, gpuDriver, gpuPower, gpuMode = "on"; qint64 gpuActive = 0, gpuSusp = 0;
     QString dgpu; int nvme = -1; QString load; double ghz = 0, memUsedGb = 0, memTotalGb = 0;
 };
 Q_DECLARE_METATYPE(Snapshot)
@@ -27,6 +29,6 @@ signals:
     void snapshot(const Snapshot &s);
 private:
     void poll();
-    QTimer *timer = nullptr; quint64 lastTotal = 0, lastIdle = 0; QString batPath, acPath, dgpuPath;
+    QTimer *timer = nullptr; quint64 lastTotal = 0, lastIdle = 0; QString batPath, acPath, dgpuPath; bool hasIgpu = false;
 };
 #endif

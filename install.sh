@@ -20,7 +20,7 @@ if [ "$UNINSTALL" = 1 ]; then
     $SUDO systemctl disable --now mcontrolcenter-doctor.service 2>/dev/null || true
     $SUDO rm -vf /usr/bin/mcontrolcenter /usr/libexec/mcontrolcenter-helper /usr/share/applications/mcontrolcenter.desktop /etc/xdg/autostart/mcontrolcenter.desktop \
         /usr/share/icons/hicolor/scalable/apps/mcontrolcenter.svg /usr/share/dbus-1/system.d/mcontrolcenter-helper.conf /usr/share/dbus-1/system-services/mcontrolcenter.helper.service \
-        /etc/systemd/system/mcontrolcenter-doctor.service /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy
+        /etc/systemd/system/mcontrolcenter-doctor.service /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy
     $SUDO rm -rvf /usr/libexec/mcontrolcenter
     say "done (the msi-ec driver was left in place; remove it with: sudo dkms remove msi-ec --all)"; exit 0
 fi
@@ -46,6 +46,8 @@ $SUDO install -Dm644 resources/mcontrolcenter.svg /usr/share/icons/hicolor/scala
 $SUDO install -Dm644 src/helper/mcontrolcenter-helper.conf /usr/share/dbus-1/system.d/mcontrolcenter-helper.conf
 $SUDO install -Dm644 src/helper/mcontrolcenter.helper.service /usr/share/dbus-1/system-services/mcontrolcenter.helper.service
 $SUDO install -Dm755 scripts/mcontrolcenter-doctor /usr/libexec/mcontrolcenter/mcontrolcenter-doctor
+$SUDO install -Dm755 scripts/mcontrolcenter-gpu /usr/libexec/mcontrolcenter/mcontrolcenter-gpu
+$SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.gpu.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy
 $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy
 $SUDO install -Dm644 packaging/mcontrolcenter-doctor.service /etc/systemd/system/mcontrolcenter-doctor.service
 $SUDO install -Dm644 packaging/mcontrolcenter-autostart.desktop /etc/xdg/autostart/mcontrolcenter.desktop

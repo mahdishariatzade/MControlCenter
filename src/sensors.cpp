@@ -1,6 +1,7 @@
 #include "sensors.h"
 #include <QFile>
 #include <QDir>
+#include <QFileInfo>
 
 namespace {
 QString rd(const QString &path) { QFile f(path); return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).trimmed() : QString(); }
@@ -19,7 +20,7 @@ void SensorWorker::start() {
     }
     for (const QString &n : QDir("/sys/bus/pci/devices").entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {      // discrete GPU = a display controller that is not the boot (integrated) one
         const QString d = "/sys/bus/pci/devices/" + n;
-        if (rd(d + "/class").startsWith("0x03") && rd(d + "/boot_vga") != "1") { dgpuPath = d; break; }
+        if (rd(d + "/class").startsWith("0x03")) { if (rd(d + "/boot_vga") == "1") hasIgpu = true; else if (dgpuPath.isEmpty()) dgpuPath = d; }
     }
     timer = new QTimer(this); timer->setInterval(1000); connect(timer, &QTimer::timeout, this, &SensorWorker::poll); timer->start(); poll();
 }
@@ -37,6 +38,9 @@ void SensorWorker::poll() {
         const QString sm = rd(EC + "shift_mode"), fm = rd(EC + "fan_mode");
         d.mode = sm == "turbo" ? 0 : sm == "eco" ? 3 : (sm == "comfort" && fm == "silent") ? 2 : (sm == "comfort" || sm == "sport") ? 1 : -1;
         d.coolerBoost = rd(EC + "cooler_boost") == "on";
+        s.hasWebcam = QFile::exists(EC + "webcam"); s.webcamOn = rd(EC + "webcam") == "on";
+        s.hasFn = QFile::exists(EC + "fn_key"); s.fnSwapped = rd(EC + "fn_key") == "left";
+        s.hasUsb = QFile::exists(EC + "usb_share"); s.usbOn = rd(EC + "usb_share") == "on";
     }
     int thr = int(rdi(batPath + "/charge_control_end_threshold", 100)); d.chargeLimit = (thr <= 0 || thr > 100) ? 100 : thr;
     s.status = rd(batPath + "/status"); s.cap = int(rdi(batPath + "/capacity", 0));
@@ -44,6 +48,15 @@ void SensorWorker::poll() {
     s.chargeNow = rdi(batPath + "/charge_now", 0); s.chargeFull = rdi(batPath + "/charge_full", 0); s.chargeDesign = rdi(batPath + "/charge_full_design", 0); s.cycles = rdi(batPath + "/cycle_count", 0);
     s.ac = !acPath.isEmpty() && rdi(acPath + "/online", 0) == 1;
     s.dgpu = dgpuPath.isEmpty() ? QString() : rd(dgpuPath + "/power_state");
+    s.gpuKnown = true;                                                    // discrete GPU boot-mode info (the same facts mcontrolcenter-gpu status prints)
+    if (dgpuPath.isEmpty()) { s.gpuReason = "no discrete GPU found"; }
+    else if (rd(dgpuPath + "/vendor") != "0x10de") { s.gpuReason = "only NVIDIA discrete GPUs are supported"; }
+    else if (!hasIgpu) { s.gpuReason = "there is no integrated GPU to fall back on"; }
+    else {
+        s.gpuSupported = true; QFileInfo drv(dgpuPath + "/driver"); s.gpuDriver = drv.isSymLink() ? QFileInfo(drv.symLinkTarget()).fileName() : QString("none");
+        s.gpuPower = s.dgpu.isEmpty() ? QString("unknown") : s.dgpu; s.gpuActive = rdi(dgpuPath + "/power/runtime_active_time", 0); s.gpuSusp = rdi(dgpuPath + "/power/runtime_suspended_time", 0);
+        s.gpuMode = (QFile::exists("/etc/modprobe.d/mcontrolcenter-dgpu-off.conf") || QFile::exists("/etc/modprobe.d/dgpu-off.conf")) ? "off" : "on";
+    }
     for (const QString &h : QDir("/sys/class/hwmon").entryList({"hwmon*"}, QDir::Dirs)) if (rd("/sys/class/hwmon/" + h + "/name") == "nvme") { s.nvme = int(rdi("/sys/class/hwmon/" + h + "/temp1_input") / 1000); break; }
     QStringList st = rd("/proc/stat").section('\n', 0, 0).split(' ', Qt::SkipEmptyParts);
     if (st.size() > 8) { quint64 tot = 0; for (int k = 1; k <= 8; ++k) tot += st[k].toULongLong(); quint64 idle = st[4].toULongLong() + st[5].toULongLong();

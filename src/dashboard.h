@@ -12,7 +12,8 @@ class ThermalPanel;
 class FanPanel;
 class PowerPanel;
 class GraphPanel;
-class TileStrip;
+namespace kit { class TileStrip; }
+using kit::TileStrip;
 class HeaderBar;
 class BannerBar;
 class QVBoxLayout;
@@ -25,6 +26,7 @@ struct Caps {
     bool coolerBoost = true;
     bool chargeLimit = true;
     bool modeOk[4] = {true, true, true, true};   // turbo, balanced, silent, eco
+    bool webcam = true, fnSwap = true, usbShare = false;   // optional hardware switches
     QString model, board, fw, cpuName, gpuName;
 };
 
@@ -46,6 +48,8 @@ public:
     void setData(const DashData &d);        // legacy path (no msi-ec): MainWindow supplies EC values
     void applySnapshot(const Snapshot &s);  // normal path: sensor thread -> UI, once a second
     void setRpm(int cpuRpm, int gpuRpm);    // fan RPM comes from the ec_sys helper (cached), cheap to set from the GUI thread
+    struct PowerText { QString state, draw, eta, health, cycles; };
+    PowerText powerText() const;
     void setControlsEnabled(bool enabled);
     void setProblem(const QString &text, const QString &button);   // empty text hides the banner
 

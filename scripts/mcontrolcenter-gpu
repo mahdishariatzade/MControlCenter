@@ -1,0 +1,76 @@
+#!/bin/bash
+# mcontrolcenter-gpu - boot-time power switch for the DISCRETE NVIDIA GPU of a hybrid laptop.
+#
+#   mcontrolcenter-gpu status     key=value report (no root)
+#   mcontrolcenter-gpu set off    keep every NVIDIA driver off the dGPU at the next boot so it can sit in D3cold (root)
+#   mcontrolcenter-gpu set on     back to normal (root)
+#
+# This is NOT a hardware MUX switch (MSI MUX/"discrete mode" is a BIOS setting and cannot be changed from Linux). It only decides whether a
+# kernel driver binds the dGPU at boot. Nothing is ever detached while the system is running: that has hung kernels on some laptops.
+# While the dGPU is off, every display output wired to it (often HDMI / USB-C DP) does not work.
+set -u
+CONF=/etc/modprobe.d/mcontrolcenter-dgpu-off.conf
+RULE=/etc/udev/rules.d/80-mcontrolcenter-dgpu-off.rules
+have() { command -v "$1" >/dev/null 2>&1; }
+
+find_dgpu() {   # first display controller that is not the boot (integrated) one
+    local d
+    for d in /sys/bus/pci/devices/*; do
+        case "$(cat "$d/class" 2>/dev/null)" in 0x03*) [ "$(cat "$d/boot_vga" 2>/dev/null)" = 1 ] || { echo "$d"; return; } ;; esac
+    done
+}
+has_igpu() { local d; for d in /sys/bus/pci/devices/*; do case "$(cat "$d/class" 2>/dev/null)" in 0x03*) [ "$(cat "$d/boot_vga" 2>/dev/null)" = 1 ] && return 0 ;; esac; done; return 1; }
+mode() { [ -f "$CONF" ] && echo off || echo on; }
+
+status() {
+    local dev; dev="$(find_dgpu)"
+    if [ -z "$dev" ]; then echo "supported=no"; echo "reason=no discrete GPU found"; echo "mode=on"; return; fi
+    local vendor; vendor="$(cat "$dev/vendor")"
+    echo "device=$(basename "$dev")"; echo "vendor=$vendor"; echo "mode=$(mode)"
+    if [ "$vendor" != 0x10de ]; then echo "supported=no"; echo "reason=only NVIDIA discrete GPUs are supported (found vendor $vendor)"; return; fi
+    if ! has_igpu; then echo "supported=no"; echo "reason=no integrated GPU: the discrete GPU is your only GPU"; return; fi
+    echo "supported=yes"
+    local drv=none; [ -L "$dev/driver" ] && drv="$(basename "$(readlink "$dev/driver")")"
+    echo "driver=$drv"; echo "power=$(cat "$dev/power_state" 2>/dev/null || echo unknown)"
+    echo "active_ms=$(cat "$dev/power/runtime_active_time" 2>/dev/null || echo 0)"; echo "suspended_ms=$(cat "$dev/power/runtime_suspended_time" 2>/dev/null || echo 0)"
+}
+
+rebuild_initramfs() {   # the driver can load from the initramfs, so the block has to be baked in there too
+    if have update-initramfs; then update-initramfs -u -k all >/dev/null
+    elif have dracut; then dracut -f --regenerate-all >/dev/null
+    elif have mkinitcpio; then mkinitcpio -P >/dev/null
+    else echo "warning: no initramfs tool found; the change may need a manual initramfs rebuild" >&2; fi
+}
+
+set_mode() {
+    [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
+    local dev; dev="$(find_dgpu)"
+    if [ "$1" = off ]; then
+        [ -n "$dev" ] && [ "$(cat "$dev/vendor")" = 0x10de ] || { echo "no supported discrete NVIDIA GPU" >&2; exit 2; }
+        has_igpu || { echo "refusing: there is no integrated GPU to fall back on" >&2; exit 2; }
+        cat > "$CONF" <<'C'
+# Written by mcontrolcenter-gpu: keep all NVIDIA drivers off the discrete GPU (remove this file or run `mcontrolcenter-gpu set on` to undo).
+blacklist nouveau
+blacklist nvidia
+blacklist nvidia_drm
+blacklist nvidia_modeset
+blacklist nvidia_uvm
+install nouveau /bin/false
+install nvidia /bin/false
+C
+        cat > "$RULE" <<'R'
+# Written by mcontrolcenter-gpu: let the driverless NVIDIA GPU runtime-suspend into D3cold.
+ACTION=="add|bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x03*", TEST=="power/control", ATTR{power/control}="auto"
+R
+    else
+        rm -f "$CONF" "$RULE"
+    fi
+    rebuild_initramfs
+    echo "mode=$(mode)"
+}
+
+case "${1:-status}" in
+    status) status ;;
+    set) case "${2:-}" in on|off) set_mode "$2" ;; *) echo "usage: $0 set on|off" >&2; exit 2 ;; esac ;;
+    *) echo "usage: $0 status | set on|off" >&2; exit 2 ;;
+esac

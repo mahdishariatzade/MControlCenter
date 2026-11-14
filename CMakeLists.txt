@@ -30,6 +30,7 @@ set(PROJECT_SOURCES
     src/settings.cpp src/settings.h
     src/dashboard.cpp src/dashboard.h src/theme.h
     src/sensors.cpp src/sensors.h
+    src/pages.cpp src/pages.h src/uikit.h
     src/bridge.cpp src/bridge.h
     src/resources.qrc
 )
