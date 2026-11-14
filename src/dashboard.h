@@ -67,7 +67,7 @@ private:
     HeaderBar *header; BannerBar *banner;
     ThermalPanel *thermal; FanPanel *fans; PowerPanel *power; GraphPanel *graph;
     TileStrip *modes, *presets;
-    QTimer fastTimer;
+    QTimer fastTimer; double slowAcc = 0;
     QElapsedTimer sinceShow;
     Caps caps; DashData cur;
     bool controlsEnabled = false;

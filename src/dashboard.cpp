@@ -119,9 +119,27 @@ protected:
 };
 
 // ───────────────────────────── 02 cooling ─────────────────────────────
+static void drawFanGlyph(QPainter &p, QPointF c, double R, double rot, const QColor &col) {
+    p.save(); p.translate(c); p.setPen(QPen(alpha(kText, 0.25), 1.2)); p.setBrush(Qt::NoBrush); p.drawEllipse(QPointF(0, 0), R, R);
+    p.rotate(rot); p.setPen(Qt::NoPen); p.setBrush(col);
+    for (int i = 0; i < 7; ++i) {                      // flat, geometric blades: a swept wedge, not a glowing flower
+        QPainterPath b; b.moveTo(R * 0.14, 0); b.lineTo(R * 0.92, -R * 0.06); b.quadTo(R * 0.98, R * 0.34, R * 0.52, R * 0.5); b.quadTo(R * 0.40, R * 0.2, R * 0.14, R * 0.12); b.closeSubpath();
+        p.drawPath(b); p.rotate(360.0 / 7);
+    }
+    p.restore(); p.setBrush(kPanel); p.setPen(QPen(col, 1.5)); p.drawEllipse(c, R * 0.15, R * 0.15);
+}
+// The spinning glyph is its own OPAQUE child widget: repainting it never makes Qt re-run the (text-heavy) panel paint underneath.
+class FanGlyph : public QWidget {
+public:
+    FanGlyph(QWidget *p) : QWidget(p) { setAttribute(Qt::WA_OpaquePaintEvent); setFixedSize(66, 66); hide(); }
+    double rot = 0; QColor col = kDim;
+protected:
+    void paintEvent(QPaintEvent *) override { QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.fillRect(rect(), kPanel); drawFanGlyph(p, QPointF(33, 33), 27, rot, alpha(col, 0.92)); }
+};
 class FanPanel : public Panel {
 public:
-    FanPanel(QWidget *p) : Panel("02", "COOLING", p) { setMinimumHeight(272); }
+    FanPanel(QWidget *p) : Panel("02", "COOLING", p) { setMinimumHeight(272); for (auto &g : gl) g = new FanGlyph(this); }
+    FanGlyph *gl[2];
     int pct[2] = {-1, -1}, rpm[2] = {0, 0}; double shown[2] = {0, 0}, speed[2] = {0, 0}, rot[2] = {0, 0}; bool two = false, boost = false, boostOk = true;
     std::function<void(bool)> onBoost;
     // Rotation is integrated from real elapsed time (deg/s), so it is perfectly smooth whatever the timer does.
@@ -133,26 +151,21 @@ public:
             double want = shown[i] < 1 ? 0 : 60 + shown[i] * 6.0;          // deg/s: ~60 at idle .. ~660 at full tilt (below the wagon-wheel limit for 7 blades)
             speed[i] += (want - speed[i]) * ease(dt, 0.9);                   // inertia: spins up and coasts down over ~a second
             rot[i] = fmod(rot[i] + speed[i] * dt, 360.0);
+            if (gl[i]->isVisible()) { gl[i]->rot = rot[i]; gl[i]->col = pct[i] < 0 ? kDim : mix(kText, gAccent, shown[i] / 100.0); gl[i]->update(); }
         }
         return bars;
     }
-    QRegion glyphRegion() const { QRegion r; for (int i = 0; i < (two ? 2 : 1); ++i) r += QRect(int(19 + 30 - 33), int(39 + (two ? 0 : 6) + i * 96 + 36 - 33), 66, 66); return r; }
+    void placeGlyphs() {     // children take over once the entrance animation is finished (same pixels, so there is no visible hand-over)
+        bool on = reveal >= 0.999;
+        for (int i = 0; i < 2; ++i) { bool want = on && (i == 0 || two); if (want) gl[i]->move(16, int(39 + (two ? 0 : 6) + i * 96 + 36 - 33)); if (gl[i]->isVisible() != want) gl[i]->setVisible(want); }
+    }
 protected:
     QRectF btn;
     void mousePressEvent(QMouseEvent *e) override { if (boostOk && btn.contains(e->position()) && onBoost) onBoost(!boost); }
     void mouseMoveEvent(QMouseEvent *e) override { setCursor(boostOk && btn.contains(e->position()) ? Qt::PointingHandCursor : Qt::ArrowCursor); }
-    void glyph(QPainter &p, QPointF c, double R, double rot, const QColor &col) {
-        p.save(); p.translate(c); p.setPen(QPen(alpha(kText, 0.25), 1.2)); p.setBrush(Qt::NoBrush); p.drawEllipse(QPointF(0, 0), R, R);
-        p.rotate(rot); p.setPen(Qt::NoPen); p.setBrush(col);
-        for (int i = 0; i < 7; ++i) {                      // flat, geometric blades: a swept wedge, not a glowing flower
-            QPainterPath b; b.moveTo(R * 0.14, 0); b.lineTo(R * 0.92, -R * 0.06); b.quadTo(R * 0.98, R * 0.34, R * 0.52, R * 0.5); b.quadTo(R * 0.40, R * 0.2, R * 0.14, R * 0.12); b.closeSubpath();
-            p.drawPath(b); p.rotate(360.0 / 7);
-        }
-        p.restore(); p.setBrush(kPanel); p.setPen(QPen(col, 1.5)); p.drawEllipse(c, R * 0.15, R * 0.15);
-    }
     void cell(QPainter &p, const QRectF &r, int i, const QString &name) {
         QColor col = pct[i] < 0 ? kDim : mix(kText, gAccent, shown[i] / 100.0);
-        glyph(p, QPointF(r.left() + 30, r.top() + 36), 27, rot[i], alpha(col, 0.92));
+        if (!gl[i]->isVisible()) drawFanGlyph(p, QPointF(r.left() + 30, r.top() + 36), 27, rot[i], alpha(col, 0.92));   // during the entrance only
         p.setFont(fnt(RAJ, 15, QFont::DemiBold, 2)); p.setPen(kText); p.drawText(QRectF(r.left() + 72, r.top() - 2, 100, 18), Qt::AlignLeft, name);
         p.setFont(fnt(RAJ, 40, QFont::Bold)); p.setPen(pct[i] < 0 ? kDim : kText);
         p.drawText(QRectF(r.left() + 70, r.top() + 12, r.width() - 70, 44), Qt::AlignLeft | Qt::AlignVCenter, rpm[i] > 0 ? QString::number(rpm[i]) : (pct[i] > 0 ? QString("%1%").arg(pct[i]) : "—"));
@@ -410,18 +423,24 @@ void DashboardPage::setData(const DashData &d) {
 void DashboardPage::animate() {
     double now = sinceShow.elapsed() / 1000.0, rawDt = now - gClock, dt = qBound(0.001, rawDt, 0.05); gClock = now;
     static const bool frameLog = qEnvironmentVariableIsSet("MCC_FRAMELOG"); if (frameLog && rawDt > 0.030) fprintf(stderr, "[frame] gap %.0f ms at t=%.2f\n", rawDt * 1000, now);
-    QColor before = gAccent; gAccent = mix(gAccent, gAccentTarget, ease(dt, 0.12));      // accent cross-fades when the mode changes
+    // Frame budget: only the fan glyphs run at full rate (and only a 66x66 px opaque child repaints). Everything else is limited to 30 fps and
+    // repaints only while its value is actually changing. A window that is not in front drops to 30 fps overall.
+    bool active = window()->isActiveWindow(); int want = active ? 16 : 33; if (fastTimer.interval() != want) fastTimer.setInterval(want);
+    bool fanFull = fans->step(dt);
+    slowAcc += dt; bool slowFrame = slowAcc >= 0.033 || gClock < 1.5;                 // entrance animation runs at full rate
+    if (!slowFrame && !fanFull) return;
+    double sdt = slowAcc; slowAcc = 0;
+    QColor before = gAccent; gAccent = mix(gAccent, gAccentTarget, ease(sdt, 0.12));      // accent cross-fades when the mode changes
     bool accentMoved = qAbs(before.red() - gAccent.red()) + qAbs(before.green() - gAccent.green()) + qAbs(before.blue() - gAccent.blue()) > 0;
     if (accentMoved) for (QWidget *w : std::initializer_list<QWidget *>{header, thermal, fans, power, graph, modes, presets}) w->update();
-    // Only repaint what actually changed: panels idle at zero cost, the fan glyphs get a tiny partial repaint at 60 fps.
-    if (thermal->tick(now, dt) | thermal->step(dt)) thermal->update();
-    if (power->tick(now, dt) | power->step(dt)) power->update();
-    if (graph->tick(now, dt)) graph->update();
-    bool fanFull = fans->tick(now, dt); fanFull |= fans->step(dt);
-    if (fanFull) fans->update(); else fans->update(fans->glyphRegion());
-    if (header->tick(now, dt)) header->update();
-    if (modes->tick(now, dt)) modes->update();
-    if (presets->tick(now, dt)) presets->update();
+    if (thermal->tick(now, sdt) | thermal->step(sdt)) thermal->update();
+    if (power->tick(now, sdt) | power->step(sdt)) power->update();
+    if (graph->tick(now, sdt)) graph->update();
+    if (fans->tick(now, sdt) || fanFull) fans->update();
+    fans->placeGlyphs();
+    if (header->tick(now, sdt)) header->update();
+    if (modes->tick(now, sdt)) modes->update();
+    if (presets->tick(now, sdt)) presets->update();
 }
 
 void DashboardPage::setRpm(int cpuRpm, int gpuRpm) { fans->rpm[0] = cpuRpm; fans->rpm[1] = gpuRpm; }

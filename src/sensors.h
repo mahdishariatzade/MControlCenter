@@ -27,6 +27,6 @@ signals:
     void snapshot(const Snapshot &s);
 private:
     void poll();
-    QTimer *timer = nullptr; quint64 lastTotal = 0, lastIdle = 0; QString batPath;
+    QTimer *timer = nullptr; quint64 lastTotal = 0, lastIdle = 0; QString batPath, acPath, dgpuPath;
 };
 #endif

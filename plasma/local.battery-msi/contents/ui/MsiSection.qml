@@ -48,7 +48,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             Kirigami.Icon { source: "cpu"; implicitWidth: Kirigami.Units.iconSizes.smallMedium; implicitHeight: implicitWidth }
-            PlasmaComponents3.Label { text: "MSI Crosshair 16 HX AI"; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+            PlasmaComponents3.Label { text: msi.st.model ? "MSI " + msi.st.model : "MSI laptop"; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
             PlasmaComponents3.ToolButton { icon.name: "configure"; onClicked: msi.call("ShowWindow"); PlasmaComponents3.ToolTip { text: "Open MControlCenter" } }
         }
 

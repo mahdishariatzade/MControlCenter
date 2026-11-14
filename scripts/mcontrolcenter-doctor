@@ -3,6 +3,7 @@
 #
 #   mcontrolcenter-doctor status [--json]   what is wrong (no root needed)
 #   mcontrolcenter-doctor fix    [--quiet]   install headers/DKMS/source as needed, build msi-ec for the RUNNING kernel, load it (root)
+#   mcontrolcenter-doctor report             markdown hardware report to paste into a GitHub issue (no serials / personal data)
 #   mcontrolcenter-doctor boot               same as `fix --quiet`, but does nothing unless something is actually broken (used by the systemd unit)
 #
 # Why it exists: msi-ec is an out-of-tree driver built by DKMS. After a kernel update DKMS can only rebuild it if the matching
@@ -129,4 +130,27 @@ cmd_boot() {   # cheap no-op when healthy, so it is safe to run at every boot
     cmd_fix
 }
 
-case "$CMD" in status) cmd_status ;; fix) cmd_fix ;; boot) cmd_boot ;; *) echo "usage: $0 status|fix|boot [--quiet] [--json]" >&2; exit 1 ;; esac
+cmd_report() {   # markdown hardware report for GitHub issues. Contains NO serial numbers, UUIDs, MACs, hostname or user name.
+    local e=/sys/devices/platform/msi-ec d=/sys/class/dmi/id
+    echo "### MControlCenter hardware report"
+    echo '```'
+    echo "model:        $(cat $d/sys_vendor 2>/dev/null) $(cat $d/product_name 2>/dev/null)"
+    echo "board:        $(cat $d/board_name 2>/dev/null)"
+    echo "bios:         $(cat $d/bios_version 2>/dev/null) ($(cat $d/bios_date 2>/dev/null))"
+    echo "ec firmware:  $(cat $e/fw_version 2>/dev/null || echo 'n/a')  released $(cat $e/fw_release_date 2>/dev/null || echo 'n/a')"
+    echo "doctor state: $(state)"
+    echo "msi-ec dkms:  $(dkms_id || true)"
+    echo "kernel:       $KVER"
+    echo "distro:       $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")"
+    echo "desktop:      ${XDG_CURRENT_DESKTOP:-unknown} / ${XDG_SESSION_TYPE:-unknown}"
+    echo "power-profiles-daemon: $(have powerprofilesctl && powerprofilesctl get 2>/dev/null || echo 'not found')"
+    echo "shift modes:  $(cat $e/available_shift_modes 2>/dev/null | tr '\n' ' ')"
+    echo "fan modes:    $(cat $e/available_fan_modes 2>/dev/null | tr '\n' ' ')"
+    echo "msi-ec files: $(ls $e 2>/dev/null | grep -vE '^(power|subsystem|driver|driver_override|modalias|uevent)$' | tr '\n' ' ')"
+    echo "gpu sensor:   $([ -e $e/gpu/realtime_temperature ] && echo yes || echo no)   2nd fan: $([ -e $e/gpu/realtime_fan_speed ] && echo yes || echo no)"
+    echo "battery limit: $(ls /sys/class/power_supply/BAT*/charge_control_end_threshold 2>/dev/null | head -1 | xargs -r cat 2>/dev/null || echo 'not supported')"
+    echo '```'
+    echo "Please also say: what works, what is missing or wrong on the Dashboard, and attach a screenshot."
+}
+
+case "$CMD" in status) cmd_status ;; fix) cmd_fix ;; boot) cmd_boot ;; report) cmd_report ;; *) echo "usage: $0 status|fix|boot|report [--quiet] [--json]" >&2; exit 1 ;; esac

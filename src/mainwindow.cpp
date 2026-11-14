@@ -31,6 +31,7 @@
 #include <QDBusConnection>
 #include "theme.h"
 
+static QString slurp(const QString &path) { QFile f(path); return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).trimmed() : QString(); }
 Operate operate;
 // operate.isMsiEcLoaded() is a blocking D-Bus round trip to the root helper (~60 ms each); this is the same answer from the filesystem.
 static bool msiEcPresent() { return QFile::exists("/sys/devices/platform/msi-ec/shift_mode"); }
@@ -1119,13 +1120,12 @@ void MainWindow::setChargeLimit(int percent) {
 QString MainWindow::stateJson() const {
     static const char *modes[] = {"turbo", "balanced", "silent", "eco"};
     QJsonObject o; const DashData &d = dashData;
-    o["mode"] = d.mode >= 0 ? modes[d.mode] : "unknown"; o["cpuTemp"] = d.cpuTemp; o["gpuTemp"] = d.gpuTemp;
+    o["model"] = slurp("/sys/class/dmi/id/product_name"); o["mode"] = d.mode >= 0 ? modes[d.mode] : "unknown"; o["cpuTemp"] = d.cpuTemp; o["gpuTemp"] = d.gpuTemp;
     o["cpuFanPct"] = d.cpuFanPct; o["gpuFanPct"] = d.gpuFanPct; o["cpuFanRpm"] = d.cpuFanRpm; o["gpuFanRpm"] = d.gpuFanRpm;
     o["coolerBoost"] = d.coolerBoost; o["chargeLimit"] = d.chargeLimit;
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 
-static QString slurp(const QString &path) { QFile f(path); return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).trimmed() : QString(); }
 
 // What can THIS laptop do? Probed once; the dashboard hides everything the hardware does not have.
 void MainWindow::probeCaps() {

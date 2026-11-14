@@ -10,8 +10,17 @@ const QString EC = "/sys/devices/platform/msi-ec/";
 
 SensorWorker::SensorWorker() { qRegisterMetaType<Snapshot>("Snapshot"); }
 
+// Discover this machine's own devices instead of assuming BAT1 / ADP1 / 01:00.0 (open-source: it has to work on any MSI laptop).
 void SensorWorker::start() {
-    for (const QString &n : QDir("/sys/class/power_supply").entryList({"BAT*"}, QDir::Dirs)) { batPath = "/sys/class/power_supply/" + n; break; }
+    for (const QString &n : QDir("/sys/class/power_supply").entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QString d = "/sys/class/power_supply/" + n;
+        if (rd(d + "/type") == "Battery" && rd(d + "/scope") != "Device" && batPath.isEmpty()) batPath = d;       // not a mouse / headset battery
+        if (rd(d + "/type") == "Mains" && acPath.isEmpty()) acPath = d;
+    }
+    for (const QString &n : QDir("/sys/bus/pci/devices").entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {      // discrete GPU = a display controller that is not the boot (integrated) one
+        const QString d = "/sys/bus/pci/devices/" + n;
+        if (rd(d + "/class").startsWith("0x03") && rd(d + "/boot_vga") != "1") { dgpuPath = d; break; }
+    }
     timer = new QTimer(this); timer->setInterval(1000); connect(timer, &QTimer::timeout, this, &SensorWorker::poll); timer->start(); poll();
 }
 void SensorWorker::setFast(bool fast) { if (timer) timer->setInterval(fast ? 1000 : 5000); if (fast) poll(); }
@@ -33,8 +42,8 @@ void SensorWorker::poll() {
     s.status = rd(batPath + "/status"); s.cap = int(rdi(batPath + "/capacity", 0));
     s.volts = rdi(batPath + "/voltage_now", 0) / 1e6; s.currentUa = qAbs(double(rdi(batPath + "/current_now", 0)));
     s.chargeNow = rdi(batPath + "/charge_now", 0); s.chargeFull = rdi(batPath + "/charge_full", 0); s.chargeDesign = rdi(batPath + "/charge_full_design", 0); s.cycles = rdi(batPath + "/cycle_count", 0);
-    s.ac = rdi("/sys/class/power_supply/ADP1/online", 0) == 1;
-    s.dgpu = rd("/sys/bus/pci/devices/0000:01:00.0/power_state");
+    s.ac = !acPath.isEmpty() && rdi(acPath + "/online", 0) == 1;
+    s.dgpu = dgpuPath.isEmpty() ? QString() : rd(dgpuPath + "/power_state");
     for (const QString &h : QDir("/sys/class/hwmon").entryList({"hwmon*"}, QDir::Dirs)) if (rd("/sys/class/hwmon/" + h + "/name") == "nvme") { s.nvme = int(rdi("/sys/class/hwmon/" + h + "/temp1_input") / 1000); break; }
     QStringList st = rd("/proc/stat").section('\n', 0, 0).split(' ', Qt::SkipEmptyParts);
     if (st.size() > 8) { quint64 tot = 0; for (int k = 1; k <= 8; ++k) tot += st[k].toULongLong(); quint64 idle = st[4].toULongLong() + st[5].toULongLong();
