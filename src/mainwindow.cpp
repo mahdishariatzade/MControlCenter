@@ -23,6 +23,7 @@
 #include <QTimer>
 #include <QMessageBox>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QFile>
 #include <QProcess>
@@ -195,6 +196,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&sensorThread, &QThread::finished, sensors, &QObject::deleteLater);
     connect(sensors, &SensorWorker::snapshot, this, [this](const Snapshot &sn) {
         int r0 = dashData.cpuFanRpm, r1 = dashData.gpuFanRpm; if (sn.msiEc) { dashData = sn.d; dashData.cpuFanRpm = r0; dashData.gpuFanRpm = r1; }
+        lastGpuSupported = sn.gpuSupported; lastGpuMode = sn.gpuMode;
+        lastGpuState = !sn.gpuSupported ? "none" : (sn.gpuDriver == "none" || sn.gpuDriver.isEmpty()) ? "off" : sn.gpuPower.startsWith("D3") ? "asleep" : "awake";
         dashboard->applySnapshot(sn); syncPages(sn); thermalWatch(sn);
     });
     sensorThread.start();
@@ -1140,9 +1143,12 @@ void MainWindow::setChargeLimit(int percent) {
 QString MainWindow::stateJson() const {
     static const char *modes[] = {"turbo", "balanced", "silent", "eco"};
     QJsonObject o; const DashData &d = dashData;
-    o["model"] = slurp("/sys/class/dmi/id/product_name"); o["mode"] = d.mode >= 0 ? modes[d.mode] : "unknown"; o["cpuTemp"] = d.cpuTemp; o["gpuTemp"] = d.gpuTemp;
+    o["model"] = lastModel; o["mode"] = d.mode >= 0 ? modes[d.mode] : "unknown"; o["cpuTemp"] = d.cpuTemp; o["gpuTemp"] = d.gpuTemp;
     o["cpuFanPct"] = d.cpuFanPct; o["gpuFanPct"] = d.gpuFanPct; o["cpuFanRpm"] = d.cpuFanRpm; o["gpuFanRpm"] = d.gpuFanRpm;
     o["coolerBoost"] = d.coolerBoost; o["chargeLimit"] = d.chargeLimit;
+    QJsonObject caps; caps["gpu"] = lastCaps.gpuTemp; caps["fan2"] = lastCaps.fan2; caps["boost"] = lastCaps.coolerBoost; caps["limit"] = lastCaps.chargeLimit;
+    QJsonArray mo; for (int i = 0; i < 4; ++i) mo.append(lastCaps.modeOk[i]); caps["modes"] = mo; o["caps"] = caps;
+    QJsonObject gpu; gpu["supported"] = lastGpuSupported; gpu["state"] = lastGpuState; gpu["mode"] = lastGpuMode; o["dgpu"] = gpu;
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }
 
@@ -1173,6 +1179,7 @@ void MainWindow::probeCaps() {
     c.webcam = msiEcPresent() ? QFile::exists("/sys/devices/platform/msi-ec/webcam") : operate.isWebCamOffSupport();
     c.fnSwap = msiEcPresent() ? QFile::exists("/sys/devices/platform/msi-ec/fn_key") : true;
     c.usbShare = QFile::exists("/sys/devices/platform/msi-ec/usb_share") || operate.isUsbPowerShareSupport();
+    lastCaps = c; lastModel = c.model;
     dashboard->setCaps(c); controlsPage->setCaps(c); fanPage->setCaps(c);
     aboutPage->setInfo(MControlCenter_VERSION, QT_VERSION_STR, QString("%1 · %2").arg(c.fw, QString::fromStdString(operate.getEcBuild())),
                        msiEcPresent() ? QString("msi-ec %1").arg(slurp("/sys/module/msi_ec/version").isEmpty() ? QString("(DKMS)") : slurp("/sys/module/msi_ec/version")) : QString("not loaded (ec_sys fallback)"),

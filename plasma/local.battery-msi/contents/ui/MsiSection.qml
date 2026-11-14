@@ -1,119 +1,160 @@
-/*  MSI laptop section for the Power & Battery popup: thermals, fans, performance mode, Cooler Boost, charge limit.
-    Talks to the MControlCenter tray app over its session-bus interface (io.github.dmitry_s93.MControlCenter /Control). */
+/*  MSI section of the Power & Battery popup: live thermals, fans, performance mode, Cooler Boost, dGPU state and charge limit.
+    Same visual language as the MControlCenter app (chamfered shapes, segmented meters, one accent that follows the mode),
+    but text and surfaces use the Plasma colour scheme so it sits properly in any Plasma theme. */
 import QtQuick
 import QtQuick.Layouts
-import org.kde.plasma.components as PlasmaComponents3
-import org.kde.plasma.plasma5support as P5Support
 import org.kde.kirigami as Kirigami
 
 Item {
-    id: msi
+    id: sec
+    required property var msi
+    readonly property var st: msi.st
+    readonly property color accent: msi.accent
+    readonly property color txt: Kirigami.Theme.textColor
+    readonly property color dim: Qt.alpha(Kirigami.Theme.textColor, 0.6)
+    readonly property color hair: Qt.alpha(Kirigami.Theme.textColor, 0.22)
 
-    readonly property string bus: "gdbus call --session -d io.github.dmitry_s93.MControlCenter -o /Control -m io.github.dmitry_s93.MControlCenter.Control."
-    property var st: ({})
-    readonly property bool online: st.mode !== undefined
-    readonly property int cpu: st.cpuTemp !== undefined ? st.cpuTemp : 0
-    readonly property int gpu: st.gpuTemp !== undefined ? st.gpuTemp : -1
+    FontLoader { id: raj; source: "../fonts/Rajdhani-Bold.ttf" }
+    FontLoader { id: mono; source: "../fonts/IBMPlexMono-Medium.ttf" }
 
-    visible: online
-    implicitHeight: online ? col.implicitHeight + Kirigami.Units.largeSpacing : 0
-    implicitWidth: parent ? parent.width : 300
+    visible: msi.online
+    implicitHeight: msi.online ? col.implicitHeight + Kirigami.Units.largeSpacing : 0
+    implicitWidth: parent ? parent.width : 320
 
-    function tempColor(t) { return t >= 85 ? "#ff4560" : t >= 72 ? "#ffb020" : t >= 55 ? "#3dff9a" : "#19e3ff" }
-    function call(method, arg) { exec.connectSource(bus + method + (arg !== undefined ? " " + arg : "")) }
-    function refresh() { exec.connectSource(bus + "State") }
-
-    P5Support.DataSource {
-        id: exec
-        engine: "executable"
-        onNewData: (source, data) => {
-            disconnectSource(source)
-            if (source.indexOf("Control.State") >= 0) {
-                const m = /'(\{.*\})'/.exec(data.stdout || "")
-                if (m) { try { msi.st = JSON.parse(m[1]) } catch (e) {} } else msi.st = ({})
-            } else settle.restart()
+    // ── building blocks ──
+    component Tile: Item {
+        id: t
+        property string label
+        property bool checked: false
+        property color tint: sec.accent
+        property bool usable: true
+        property int fontSize: 15
+        property real cut: 8
+        signal activated()
+        implicitHeight: 34
+        scale: tap.pressed ? 0.97 : 1
+        Behavior on scale { NumberAnimation { duration: 90 } }
+        Chamfer {
+            anchors.fill: parent; cut: t.cut
+            fillColor: t.checked ? t.tint : (hover.hovered ? Qt.alpha(t.tint, 0.14) : "transparent")
+            lineColor: t.checked || hover.hovered ? t.tint : sec.hair
+            Behavior on fillColor { ColorAnimation { duration: 140 } }
         }
+        Text {
+            anchors.centerIn: parent
+            text: t.label.toUpperCase(); font.family: raj.name; font.bold: true; font.pixelSize: t.fontSize; font.letterSpacing: 1.5
+            color: t.checked ? "#0e0f11" : sec.txt; opacity: t.usable ? 1 : 0.4
+        }
+        HoverHandler { id: hover; cursorShape: t.usable ? Qt.PointingHandCursor : Qt.ArrowCursor }
+        TapHandler { id: tap; enabled: t.usable; onTapped: t.activated() }
     }
-    Timer { id: settle; interval: 600; onTriggered: msi.refresh() }
-    Timer { interval: 1500; running: msi.visible || true; repeat: true; triggeredOnStart: true; onTriggered: msi.refresh() }
+
+    component Reading: ColumnLayout {
+        id: r
+        property string name
+        property string sub
+        property real temp: 0
+        property bool asleep: false
+        spacing: 1
+        Layout.fillWidth: true
+        Layout.preferredWidth: 1
+        RowLayout {
+            spacing: 6
+            Text { text: r.name; font.family: mono.name; font.pixelSize: 10; font.letterSpacing: 1.5; color: sec.dim }
+            Text { text: r.sub; font.family: mono.name; font.pixelSize: 9; color: sec.dim; elide: Text.ElideRight; Layout.fillWidth: true; opacity: 0.8 }
+        }
+        RowLayout {
+            spacing: 3
+            Text { text: r.asleep ? "SLEEP" : Math.round(r.temp); font.family: raj.name; font.bold: true; font.pixelSize: r.asleep ? 24 : 38; color: r.asleep ? sec.dim : sec.txt; Layout.alignment: Qt.AlignBaseline }
+            Text { visible: !r.asleep; text: "°C"; font.family: raj.name; font.pixelSize: 15; color: sec.dim; Layout.alignment: Qt.AlignBaseline }
+        }
+        SegBar { Layout.fillWidth: true; value: r.asleep ? 0 : Math.max(0, Math.min(1, (r.temp - 30) / 70)); accent: sec.accent; flat: sec.txt }
+    }
+
+    component Caption: Text { font.family: mono.name; font.pixelSize: 10; font.letterSpacing: 1.5; color: sec.dim }
 
     ColumnLayout {
         id: col
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
         anchors.leftMargin: Kirigami.Units.smallSpacing; anchors.rightMargin: Kirigami.Units.smallSpacing
-        spacing: Kirigami.Units.smallSpacing
+        spacing: Kirigami.Units.smallSpacing + 2
 
-        Rectangle { Layout.fillWidth: true; height: 1; color: Kirigami.Theme.textColor; opacity: 0.15 }
+        Rectangle { Layout.fillWidth: true; height: 1; color: sec.hair }
 
+        // header: model + current mode, accent bar on the left
         RowLayout {
-            Layout.fillWidth: true
-            Kirigami.Icon { source: "cpu"; implicitWidth: Kirigami.Units.iconSizes.smallMedium; implicitHeight: implicitWidth }
-            PlasmaComponents3.Label { text: msi.st.model ? "MSI " + msi.st.model : "MSI laptop"; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-            PlasmaComponents3.ToolButton { icon.name: "configure"; onClicked: msi.call("ShowWindow"); PlasmaComponents3.ToolTip { text: "Open MControlCenter" } }
+            Layout.fillWidth: true; spacing: 8
+            Rectangle { width: 4; Layout.preferredHeight: 34; color: sec.accent; Behavior on color { ColorAnimation { duration: 300 } } }
+            ColumnLayout {
+                spacing: 0; Layout.fillWidth: true
+                Text { text: (sec.st.model ? sec.st.model : "MSI LAPTOP").toUpperCase(); font.family: raj.name; font.bold: true; font.pixelSize: 19; font.letterSpacing: 2; color: sec.txt; elide: Text.ElideRight; Layout.fillWidth: true }
+                Caption { text: (msi.modeIndex >= 0 ? msi.modeNames[msi.modeIndex].toUpperCase() + " MODE" : "MODE UNKNOWN") + (sec.st.coolerBoost ? "  ·  COOLER BOOST" : "") }
+            }
+            Tile { label: "OPEN"; Layout.preferredWidth: 58; implicitHeight: 28; fontSize: 13; cut: 6; onActivated: msi.call("ShowWindow") }
         }
 
-        // live readouts
+        // thermals
         RowLayout {
-            Layout.fillWidth: true; spacing: Kirigami.Units.smallSpacing
+            Layout.fillWidth: true; spacing: Kirigami.Units.largeSpacing
+            Reading { name: "CPU"; temp: sec.st.cpuTemp || 0 }
+            Reading { visible: !!msi.caps.gpu; name: "GPU"; temp: sec.st.gpuTemp || 0; asleep: !(sec.st.gpuTemp > 0) }
+        }
+        Caption {
+            text: "FAN " + (sec.st.cpuFanPct >= 0 ? sec.st.cpuFanPct + "%" : "—") + (sec.st.cpuFanRpm > 0 ? "  ·  " + (sec.st.cpuFanRpm / 1000).toFixed(1) + "k RPM" : "")
+                  + (msi.caps.fan2 && sec.st.gpuFanPct >= 0 ? "      GPU FAN " + sec.st.gpuFanPct + "%" : "")
+        }
+
+        // performance mode
+        Caption { text: "PERFORMANCE MODE" }
+        RowLayout {
+            Layout.fillWidth: true; spacing: 6
             Repeater {
-                model: [
-                    { l: "CPU", v: msi.cpu + "°C", c: msi.tempColor(msi.cpu) },
-                    { l: "GPU", v: msi.gpu > 0 ? msi.gpu + "°C" : "asleep", c: msi.gpu > 0 ? msi.tempColor(msi.gpu) : Kirigami.Theme.disabledTextColor },
-                    { l: "CPU fan", v: msi.st.cpuFanPct + " %", c: Kirigami.Theme.highlightColor },
-                    { l: "GPU fan", v: msi.st.gpuFanPct + " %", c: Kirigami.Theme.highlightColor }
-                ]
-                delegate: Rectangle {
-                    required property var modelData
+                model: 4
+                delegate: Tile {
+                    required property int index
+                    visible: !!msi.caps.modes[index]
                     Layout.fillWidth: true; Layout.preferredWidth: 1
-                    implicitHeight: cell.implicitHeight + Kirigami.Units.smallSpacing * 2
-                    radius: Kirigami.Units.cornerRadius; color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.07)
-                    border.width: 1; border.color: Qt.alpha(modelData.c, 0.5)
-                    ColumnLayout {
-                        id: cell; anchors.centerIn: parent; spacing: 0
-                        PlasmaComponents3.Label { Layout.alignment: Qt.AlignHCenter; text: modelData.v; color: modelData.c; font.bold: true; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.25 }
-                        PlasmaComponents3.Label { Layout.alignment: Qt.AlignHCenter; text: modelData.l; opacity: 0.65; font.pixelSize: Kirigami.Theme.smallFont.pixelSize }
-                    }
+                    label: msi.modeNames[index]; tint: msi.modeColors[index]; checked: msi.modeIndex === index
+                    onActivated: msi.call("SetMode", "'" + msi.modeKeys[index] + "'")
                 }
             }
         }
 
-        PlasmaComponents3.Label { text: "Performance mode"; opacity: 0.7; font.pixelSize: Kirigami.Theme.smallFont.pixelSize }
+        // cooler boost + dGPU
         RowLayout {
-            Layout.fillWidth: true; spacing: Kirigami.Units.smallSpacing
-            Repeater {
-                model: [{ k: "turbo", n: "Turbo", c: "#ff2bd6" }, { k: "balanced", n: "Balanced", c: "#19e3ff" }, { k: "silent", n: "Silent", c: "#966eff" }, { k: "eco", n: "Eco", c: "#3dff9a" }]
-                delegate: PlasmaComponents3.Button {
-                    required property var modelData
-                    Layout.fillWidth: true; Layout.preferredWidth: 1
-                    text: modelData.n; checkable: true; autoExclusive: false; checked: msi.st.mode === modelData.k
-                    onClicked: { checked = true; msi.call("SetMode", "'" + modelData.k + "'") }
-                    background: Rectangle {
-                        radius: Kirigami.Units.cornerRadius
-                        color: parent.checked ? Qt.alpha(modelData.c, 0.22) : (parent.hovered ? Qt.rgba(1, 1, 1, 0.08) : "transparent")
-                        border.width: parent.checked ? 2 : 1; border.color: parent.checked ? modelData.c : Qt.alpha(Kirigami.Theme.textColor, 0.3)
-                    }
+            Layout.fillWidth: true; spacing: 6
+            Tile {
+                visible: !!msi.caps.boost; Layout.fillWidth: true; Layout.preferredWidth: 1
+                label: "Cooler Boost"; fontSize: 14; checked: sec.st.coolerBoost === true; tint: "#ff4b1f"
+                onActivated: msi.call("SetCoolerBoost", sec.st.coolerBoost ? "false" : "true")
+            }
+            Item {
+                visible: !!(sec.st.dgpu && sec.st.dgpu.supported === true); Layout.fillWidth: true; Layout.preferredWidth: 1; implicitHeight: 34
+                Chamfer { anchors.fill: parent; cut: 8; lineColor: dgHover.hovered ? sec.accent : sec.hair }
+                Row {
+                    anchors.centerIn: parent; spacing: 7
+                    Rectangle { width: 7; height: 7; anchors.verticalCenter: parent.verticalCenter; color: (sec.st.dgpu && sec.st.dgpu.state === "awake") ? sec.dim : sec.accent }
+                    Text { text: "dGPU " + (sec.st.dgpu ? sec.st.dgpu.state.toUpperCase() : ""); font.family: mono.name; font.pixelSize: 11; font.letterSpacing: 1; color: sec.txt; anchors.verticalCenter: parent.verticalCenter }
                 }
+                HoverHandler { id: dgHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: msi.call("ShowWindow") }       // the GPU boot mode lives in the app (needs a restart + confirmation)
             }
         }
 
+        // charge limit
         RowLayout {
-            Layout.fillWidth: true
-            PlasmaComponents3.Label { text: "Cooler Boost (fans to maximum)"; Layout.fillWidth: true }
-            PlasmaComponents3.Switch { checked: msi.st.coolerBoost === true; onToggled: msi.call("SetCoolerBoost", checked ? "true" : "false") }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true; spacing: Kirigami.Units.smallSpacing
-            PlasmaComponents3.Label { text: "Charge limit"; Layout.fillWidth: true }
+            visible: !!msi.caps.limit; Layout.fillWidth: true; spacing: 6
+            Caption { text: "CHARGE LIMIT"; Layout.fillWidth: true }
             Repeater {
                 model: [60, 80, 100]
-                delegate: PlasmaComponents3.Button {
+                delegate: Tile {
                     required property int modelData
-                    text: modelData + " %"; checkable: true; autoExclusive: false; checked: msi.st.chargeLimit === modelData
-                    onClicked: { checked = true; msi.call("SetChargeLimit", String(modelData)) }
+                    Layout.preferredWidth: 58; implicitHeight: 28; fontSize: 14; cut: 6
+                    label: modelData + "%"; checked: sec.st.chargeLimit === modelData
+                    onActivated: msi.call("SetChargeLimit", String(modelData))
                 }
             }
         }
-        Item { implicitHeight: Kirigami.Units.smallSpacing }
+        Item { implicitHeight: 2 }
     }
 }

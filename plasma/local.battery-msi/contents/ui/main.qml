@@ -25,6 +25,8 @@ import org.kde.plasma.private.battery
 PlasmoidItem {
     id: batterymonitor
 
+    MsiState { id: msiState; fast: batterymonitor.expanded }
+
     PowerProfilesControl {
         id: powerProfilesControl
 
@@ -187,6 +189,10 @@ PlasmoidItem {
             parts.push(i18n("System is in Balanced Power mode; scroll to change"));
         }
 
+        if (msiState.online && msiState.modeIndex >= 0) {
+            parts.push(i18nc("MSI laptop: mode, CPU temperature, fan", "%1 mode · CPU %2 °C · fan %3%", msiState.modeNames[msiState.modeIndex], msiState.st.cpuTemp, msiState.st.cpuFanPct));
+        }
+
         return parts.join("\n");
     }
 
@@ -206,6 +212,7 @@ PlasmoidItem {
     }
 
     compactRepresentation: CompactRepresentation {
+        msi: msiState
         batteryPercent: batteryControl.percent
         batteryPluggedIn: batteryControl.pluggedIn
         hasBatteries: batteryControl.hasBatteries
@@ -258,6 +265,7 @@ PlasmoidItem {
 
     fullRepresentation: PopupDialog {
         id: dialogItem
+        msi: msiState
 
         readonly property var pmControl: inhibitionControl
 

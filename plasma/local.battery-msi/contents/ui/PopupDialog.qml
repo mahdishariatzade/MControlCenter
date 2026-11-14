@@ -15,6 +15,7 @@ import org.kde.kirigami as Kirigami
 PlasmaExtras.Representation {
     id: dialog
 
+    property var msi
     property alias model: batteryRepeater.model
     property bool pluggedIn
     property int chargeStopThreshold
@@ -111,7 +112,7 @@ PlasmaExtras.Representation {
                     onActiveFocusChanged: if (activeFocus) scrollView.positionViewAtItem(this)
                 }
 
-                MsiSection { width: parent.width }
+                MsiSection { width: parent.width; msi: dialog.msi }
             }
 
             delegate: BatteryItem {

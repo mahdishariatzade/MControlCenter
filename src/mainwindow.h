@@ -51,6 +51,7 @@ private:
     DashData dashData;
     SensorWorker *sensors = nullptr; QThread sensorThread;
     ControlsPage *controlsPage = nullptr; BatteryPage *batteryPage = nullptr; FanPage *fanPage = nullptr; AboutPage *aboutPage = nullptr; SettingsPage *settingsPage = nullptr;
+    Caps lastCaps; QString lastModel, lastGpuState = "none", lastGpuMode = "on"; bool lastGpuSupported = false;
     QTimer gameTimer; bool gameActive = false; int gameSavedMode = -1; bool gameSavedBoost = false; qint64 hotSince = 0; qint64 lastAlertMs = 0;
     void settingChanged(SettingsPage::Item what, int value); void gameModeTick(); void thermalWatch(const Snapshot &s); void syncSettingsPage();
     void buildPages();

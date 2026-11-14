@@ -22,6 +22,7 @@ MouseArea {
 
     readonly property bool isConstrained: [PlasmaCore.Types.Vertical, PlasmaCore.Types.Horizontal].includes(Plasmoid.formFactor)
         || Plasmoid.containmentDisplayHints & PlasmaCore.Types.ContainmentForcesSquarePlasmoids
+    property var msi: null
     property int batteryPercent: 0
     property bool batteryPluggedIn: false
     property bool hasBatteries: false
@@ -66,6 +67,16 @@ MouseArea {
         visible: root.isConstrained && (!root.hasInternalBatteries || (root.isManuallyInhibited && !root.isDischarging))
         source: root.powerModeIconSrc
         active: root.containsMouse
+    }
+
+    // a small dot in the current MSI mode colour (only while MControlCenter is running)
+    Rectangle {
+        visible: !!root.msi && root.msi.online && root.msi.modeIndex >= 0
+        width: Math.max(5, Math.round(parent.height * 0.2)); height: width; radius: 0
+        anchors.right: parent.right; anchors.top: parent.top
+        color: root.msi ? root.msi.accent : "transparent"
+        border.width: 1; border.color: Qt.rgba(0, 0, 0, 0.55)
+        Behavior on color { ColorAnimation { duration: 300 } }
     }
 
     Item {
