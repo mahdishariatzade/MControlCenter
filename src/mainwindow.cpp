@@ -1234,7 +1234,7 @@ void MainWindow::historyLoad() {
     }
     if (batteryPage) batteryPage->setHistory(histPts, histEv, histNote);
 }
-void MainWindow::historyAppend(const QString &row) { QFile f(historyFile()); if (f.open(QIODevice::Append)) { f.write(row.toUtf8() + "\n"); } historyLoad(); }
+void MainWindow::historyAppend(const QString &row) { { QFile f(historyFile()); if (f.open(QIODevice::WriteOnly | QIODevice::Append)) f.write(row.toUtf8() + "\n"); } historyLoad(); }   // closed (flushed) BEFORE it is read back
 
 void MainWindow::restoreCharger() {
     dashboard->setProblem(tr("Restoring the charger state and your charge limit..."), QString());
