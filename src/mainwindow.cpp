@@ -1460,12 +1460,12 @@ void MainWindow::exerciseLoad() {
     Settings::setValue("Cal/since", qlonglong(exSince));
 }
 void MainWindow::exerciseSave() {
-    Settings::setValue("Cal/enabled", exEnabled); Settings::setValue("Cal/stage", exStage); Settings::setValue("Cal/origLimit", exOrigLimit); Settings::setValue("Cal/stageAt", qlonglong(exStageAt));
+    Settings::setValue("Cal/enabled", exEnabled); Settings::setValue("Cal/stage", exAuto ? 0 : exStage); Settings::setValue("Cal/origLimit", exOrigLimit); Settings::setValue("Cal/stageAt", qlonglong(exStageAt));
     Settings::setValue("Cal/last", qlonglong(exLast)); Settings::setValue("Cal/since", qlonglong(exSince)); Settings::setValue("Cal/low", exLow); Settings::setValue("Cal/lowAt", qlonglong(exLowAt));
     Settings::setValue("Cal/acSec", exAcSec); Settings::setValue("Cal/batSec", exBatSec); exLastSave = secsNow();
 }
 ExerciseView MainWindow::exerciseView() const {
-    ExerciseView v; v.enabled = exEnabled; v.stage = exStage; v.cap = rgbBattery; v.target = kCalTarget; v.never = exLast == 0;
+    ExerciseView v; v.enabled = exEnabled; v.stage = exStage; v.cap = rgbBattery; v.target = kCalTarget; v.never = exLast == 0; v.autoRun = exAuto;
     v.last = exLast ? QDateTime::fromSecsSinceEpoch(exLast).toString("d MMM yyyy") : QString("never");
     const int days = calIntervalDays(); const qint64 base = exLast ? exLast : exSince; const qint64 due = base + days * 86400LL;
     v.next = QDateTime::fromSecsSinceEpoch(due).toString("d MMM yyyy"); v.due = exEnabled && secsNow() >= due;
@@ -1480,12 +1480,30 @@ void MainWindow::exerciseAction(int what, int value) {
     auto restore = [this] { setChargeLimit(exOrigLimit); };                                   // always hand the charge limit back to what the user had
     switch (what) {
         case 0: exEnabled = value != 0; if (!exEnabled && exStage) { exStage = 0; restore(); } break;
-        case 3:                                                                               // MSI: "select Best for Mobility before starting" -> charge to 100 % first
-            if (exStage) break; exOrigLimit = dashData.chargeLimit > 0 && dashData.chargeLimit <= 100 ? dashData.chargeLimit : 60; exStageAt = now; exWarnedNear = exWarnedLow = false;
-            setChargeLimit(100); exStage = rgbBattery >= 99 ? 2 : 1;
-            if (trayIcon) trayIcon->showMessage("MControlCenter", exStage == 1 ? tr("Calibration step 1 of 2: charging to 100 %. Keep the charger connected; I will tell you when to unplug.") : tr("Calibration step 2 of 2: already full. Unplug the charger and use the laptop normally."), QSystemTrayIcon::Information, 9000);
+        case 3: {
+            if (exStage || exProc) break;
+            auto startManual = [this, now] {                                                  // fallback: MSI: "select Best for Mobility before starting" -> charge to 100 % first
+                exOrigLimit = dashData.chargeLimit > 0 && dashData.chargeLimit <= 100 ? dashData.chargeLimit : 60; exStageAt = now; exWarnedNear = exWarnedLow = false;
+                setChargeLimit(100); exStage = rgbBattery >= 99 ? 2 : 1;
+                if (trayIcon) trayIcon->showMessage("MControlCenter", exStage == 1 ? tr("Calibration step 1 of 2: charging to 100 %. Keep the charger connected; I will tell you when to unplug.") : tr("Calibration step 2 of 2: already full. Unplug the charger and use the laptop normally."), QSystemTrayIcon::Information, 9000);
+                exerciseSave(); batteryPage->setExercise(exerciseView()); };
+            // preferred: the root helper does the whole thing hands-free with the charger connected (one password prompt)
+            const QString helper = "/usr/libexec/mcontrolcenter/mcontrolcenter-battery";
+            if (!QFile::exists(helper)) { startManual(); break; }
+            exProc = new QProcess(this); exProcAt = now;
+            connect(exProc, &QProcess::finished, this, [this, startManual](int code, QProcess::ExitStatus) {
+                const QString out = QString::fromUtf8(exProc->readAllStandardOutput()); exProc->deleteLater(); exProc = nullptr;
+                QString reason; for (const QString &l : out.split('\n')) if (l.startsWith("reason=")) reason = l.mid(7);
+                if (code == 0) { exAuto = true; exStage = 1; exAutoMsg.clear(); exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Automatic calibration started. Keep the charger connected: it charges to 100 %, then discharges by itself and restores everything."), QSystemTrayIcon::Information, 10000); }
+                else if (code == 3) startManual();                                            // this laptop cannot simulate an unplug: guided manual version
+                else if (code == 4 && trayIcon) trayIcon->showMessage("MControlCenter", tr("Calibration could not start: %1").arg(reason.isEmpty() ? tr("not possible right now") : reason), QSystemTrayIcon::Warning, 10000);
+                batteryPage->setExercise(exerciseView()); });
+            exProc->start("pkexec", {helper, "start"});
+            break; }
+        case 4:
+            if (exAuto) { QProcess::startDetached("pkexec", {"/usr/libexec/mcontrolcenter/mcontrolcenter-battery", "stop"}); }   // the helper restores everything on stop
+            else if (exStage) { exStage = 0; restore(); }
             break;
-        case 4: if (exStage) { exStage = 0; restore(); } break;
     }
     exerciseSave(); batteryPage->setExercise(exerciseView());
 }
@@ -1495,6 +1513,21 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
     if (sn.cap <= 0) return;
     // 1) usage learning: seconds plugged in vs on battery, exponentially forgotten (half-life about a week), saved at most every 5 minutes
     const double dt = exLastTick ? qBound(0.0, double(now - exLastTick), 30.0) : 0; exLastTick = now;
+    // 0) automatic calibration: the root helper runs it and publishes its progress; this just mirrors it (and adopts a run started before the app was restarted)
+    {
+        QFile f("/run/mcontrolcenter/calibration"); QMap<QString, QString> kv;
+        if (f.open(QIODevice::ReadOnly)) for (const QByteArray &ln : f.readAll().split('\n')) { const int i = ln.indexOf('='); if (i > 0) kv[QString::fromUtf8(ln.left(i))] = QString::fromUtf8(ln.mid(i + 1)); }
+        const QString state = kv.value("state"); const qint64 ts = kv.value("ts").toLongLong(); const bool fresh = ts && now - ts < 40;
+        const bool active = state == "charging" || state == "discharging" || state == "restoring" || state == "starting";
+        if (!exAuto && !exProc && !exStage && active && fresh) { exAuto = true; }
+        if (exAuto && !exProc) {
+            if (active && fresh) { exStage = state == "charging" || state == "starting" ? 1 : 2; exAutoMsg = kv.value("msg"); }
+            else if (active && !fresh) { exAuto = false; exStage = 0; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("The calibration service stopped unexpectedly. Your charger state is restored at the next boot at the latest; you can also run: pkexec mcontrolcenter-battery restore"), QSystemTrayIcon::Warning, 12000); }
+            else if (state == "done") { exAuto = false; exStage = 0; exLast = now; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", kv.value("msg"), QSystemTrayIcon::Information, 14000); }
+            else if (state == "aborted" || state == "error" || state == "cancelled") { exAuto = false; exStage = 0; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Calibration stopped: %1").arg(kv.value("msg")), QSystemTrayIcon::Warning, 14000); }
+        }
+    }
+    if (exAuto || exProc) { batteryPage->setRecommended(recommendedLimit()); batteryPage->setExercise(exerciseView()); return; }   // the helper owns the charger now: no manual logic, no usage learning
     if (dt > 0) { const double k = exp(-dt / (10 * 86400.0)); exAcSec *= k; exBatSec *= k; (onBat ? exBatSec : exAcSec) += dt; }
     if (onBat && (exLowAt == 0 || now - exLowAt > 30 * 86400LL || sn.cap < exLow)) { exLow = sn.cap; exLowAt = now; exerciseSave(); }       // lowest level in the last 30 days
     else if (now - exLastSave > 300) exerciseSave();

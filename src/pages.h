@@ -45,7 +45,7 @@ private:
 };
 
 // Battery calibration the way MSI describes it (see README): auto interval from real usage, charge to 100 % first, then one real discharge.
-struct ExerciseView { bool enabled = true; int stage = 0; bool due = false, never = true; QString last = "never", next = "—", lowest = "—", usage = "still learning", rule = "every 3 months"; int cap = 0, target = 20; };
+struct ExerciseView { bool enabled = true; int stage = 0; bool due = false, never = true; QString last = "never", next = "—", lowest = "—", usage = "still learning", rule = "every 3 months"; int cap = 0, target = 20; bool autoRun = false; };
 class BatteryPage : public AnimPage {
 public:
     explicit BatteryPage(QWidget *p);

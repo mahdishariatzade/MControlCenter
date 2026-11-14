@@ -23,7 +23,7 @@ using namespace kit;
 // ───────────────────────────── 01 thermal ─────────────────────────────
 class ThermalPanel : public Panel {
 public:
-    ThermalPanel(QWidget *p) : Panel("01", "THERMAL", p) { setMinimumHeight(272); }
+    ThermalPanel(QWidget *p) : Panel("", "THERMAL", p) { setMinimumHeight(272); }
     double cpu = 0, gpu = 0, cpuPeak = 0, gpuPeak = 0, cpuS = 0, gpuS = 0; bool hasGpu = false, gpuOff = false, hasNvme = false; int nvme = 0; QString cpuName, gpuName;
     bool step(double dt) { double a = cpuS, b = gpuS; cpuS += (cpu - cpuS) * ease(dt, 0.12); gpuS += (gpu - gpuS) * ease(dt, 0.12); if (fabs(cpu - cpuS) < 0.05) cpuS = cpu; if (fabs(gpu - gpuS) < 0.05) gpuS = gpu; return a != cpuS || b != gpuS; }
 protected:
@@ -72,7 +72,7 @@ protected:
 };
 class FanPanel : public Panel {
 public:
-    FanPanel(QWidget *p) : Panel("02", "COOLING", p) { setMinimumHeight(272); for (auto &g : gl) g = new FanGlyph(this); }
+    FanPanel(QWidget *p) : Panel("", "COOLING", p) { setMinimumHeight(272); for (auto &g : gl) g = new FanGlyph(this); }
     FanGlyph *gl[2];
     int pct[2] = {-1, -1}, rpm[2] = {0, 0}; double shown[2] = {0, 0}, speed[2] = {0, 0}, rot[2] = {0, 0}, rpmRef[2] = {0, 0}, lastDrawn[2] = {0, 0}; bool two = false, boost = false, boostOk = true;
     std::function<void(bool)> onBoost;
@@ -129,7 +129,7 @@ protected:
 // ───────────────────────────── 03 power ─────────────────────────────
 class PowerPanel : public Panel {
 public:
-    PowerPanel(QWidget *p) : Panel("03", "POWER", p) { setMinimumHeight(272); }
+    PowerPanel(QWidget *p) : Panel("", "POWER", p) { setMinimumHeight(272); }
     int cap = 0, limit = 100; double shown = 0; bool charging = false, limitOk = true; QString state, draw, eta, health, cycles; bool ac = false;
     std::function<void(int)> onLimit;
     bool step(double dt) { double a = shown; shown += (cap - shown) * ease(dt, 0.4); if (fabs(cap - shown) < 0.05) shown = cap; return a != shown; }
@@ -169,7 +169,7 @@ protected:
 // ───────────────────────────── 04 history graph ─────────────────────────────
 class GraphPanel : public Panel {
 public:
-    GraphPanel(QWidget *p) : Panel("04", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(118); }
+    GraphPanel(QWidget *p) : Panel("", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(118); }
     void push(double cpu, double gpu, double watts) { for (auto *d : {&c, &g, &w}) if (d->size() >= N) d->pop_front(); c.push_back(cpu); g.push_back(gpu); w.push_back(watts); }
     bool hasGpu = false;
     QString csv() const { QString o = "seconds_ago,cpu_c,gpu_c,battery_watts\n"; int n = int(c.size()); for (int i = 0; i < n; ++i) o += QString("%1,%2,%3,%4\n").arg(n - 1 - i).arg(c[i] < 0 ? QString() : QString::number(c[i], 'f', 0)).arg(g[i] < 0 ? QString() : QString::number(g[i], 'f', 0)).arg(w[i], 0, 'f', 1); return o; }

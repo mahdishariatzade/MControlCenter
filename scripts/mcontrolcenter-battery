@@ -1,0 +1,239 @@
+#!/bin/bash
+# mcontrolcenter-battery - automatic battery calibration with the charger connected, for MSI laptops with the WMI2 interface.
+#
+#   mcontrolcenter-battery status            key=value report: calibration state + whether this laptop can do it (no root)
+#   mcontrolcenter-battery start [--floor N] check everything, then run the calibration in the background (root). Exit 0 = started,
+#                                            3 = this laptop cannot do it (use the manual guide), 4 = not possible right now (see reason=)
+#   mcontrolcenter-battery stop              cancel; the charger state and your charge limit are restored (root)
+#   mcontrolcenter-battery restore           put the charger state and charge limit back (root; safe to run any time)
+#   mcontrolcenter-battery boot              at boot: undo a calibration that was cut short (power loss, crash) (root)
+#
+# How it works (reverse-engineered from MSI's own calibration tool, verified on a Crosshair 16 HX AI):
+#   MSI firmware register 0xBF bit 0 = "DC adapter simulation". With it set the embedded controller behaves as if the charger were unplugged,
+#   so the battery discharges while the charger stays physically connected. Registers are read and written through MSI's WMI method pair
+#   Get_Data / Set_Data, exposed by the kernel's msi-wmi-platform driver (debugfs). Only bit 0 is ever changed; every other bit is preserved.
+# Flow: charge limit -> 100 %, charge to full, simulate unplug, discharge to the floor (default 20 %), restore everything.
+# Safety: the original charge limit and register value are saved to disk first; the register is restored on every exit path (normal end,
+# error, signal, systemd stop, and at the next boot if the machine lost power); a 20 minute no-progress watchdog and a hard battery floor abort the run.
+set -u
+GUID=ABBC0F6E-8EA1-11D1-00A0-C90629100000
+REG_SIM=191                                   # 0xBF
+RUN=/run/mcontrolcenter; STATE=$RUN/calibration; LIB=/var/lib/mcontrolcenter; SAVE=$LIB/calibration.orig
+UNIT=mcontrolcenter-calibration
+KVER="$(uname -r)"; SELF="$(readlink -f "$0")"
+BAT="$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)"
+LOADED_BY_US=0; FINAL=""; REASON=""
+log() { logger -t mcontrolcenter-battery -- "$*" 2>/dev/null || true; echo "[battery] $*" >&2; }
+have() { command -v "$1" >/dev/null 2>&1; }
+vendor_ok() { grep -qiE 'micro-star|msi' /sys/class/dmi/id/sys_vendor 2>/dev/null; }
+wmi_present() { ls -d /sys/bus/wmi/devices/${GUID}-* >/dev/null 2>&1; }
+ac_online() { local p; for p in /sys/class/power_supply/*; do [ "$(cat $p/type 2>/dev/null)" = Mains ] && { cat $p/online 2>/dev/null; return; }; done; echo 0; }
+cap() { cat "$BAT/capacity" 2>/dev/null || echo 0; }
+bstatus() { cat "$BAT/status" 2>/dev/null; }
+charge_now() { cat "$BAT/charge_now" 2>/dev/null || cat "$BAT/energy_now" 2>/dev/null || echo $(( $(cap) * 1000 )); }
+charge_full() { cat "$BAT/charge_full" 2>/dev/null || cat "$BAT/energy_full" 2>/dev/null || echo 0; }
+cur_abs() { local c; c="$(cat "$BAT/current_now" 2>/dev/null || cat "$BAT/power_now" 2>/dev/null || echo 0)"; echo "${c#-}"; }
+running() { systemctl is-active --quiet "$UNIT" 2>/dev/null; }
+
+# ── state file for the GUI (world readable, written atomically) ──
+st() {   # st key=value ...   (keeps previous keys not mentioned)
+    mkdir -p "$RUN"; chmod 755 "$RUN"
+    local tmp; tmp="$(mktemp "$RUN/.st.XXXXXX")"; local k v kv
+    declare -A m; [ -f "$STATE" ] && while IFS='=' read -r k v; do [ -n "$k" ] && m[$k]="$v"; done < "$STATE"
+    for kv in "$@"; do m[${kv%%=*}]="${kv#*=}"; done
+    m[ts]="$(date +%s)"; m[pct]="$(cap)"
+    for k in "${!m[@]}"; do echo "$k=${m[$k]}"; done > "$tmp"; chmod 644 "$tmp"; mv -f "$tmp" "$STATE"
+}
+
+# ── driver + WMI2 register access ──
+wmi_dir() { ls -d /sys/kernel/debug/msi-wmi-platform-*/ 2>/dev/null | head -1 | sed 's#/$##'; }
+ensure_driver() {   # load msi-wmi-platform (in-tree or DKMS copy); never with force=1 (the driver refuses unknown WMI versions, which is what we want)
+    [ -n "$(wmi_dir)" ] && return 0
+    mountpoint -q /sys/kernel/debug || mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
+    if ! modprobe msi-wmi-platform 2>/dev/null; then
+        if have dkms && dkms status 2>/dev/null | grep -q '^msi-wmi-platform'; then
+            log "building msi-wmi-platform for $KVER"; dkms install msi-wmi-platform/1.0 -k "$KVER" --force >/dev/null 2>&1
+            modprobe msi-wmi-platform 2>/dev/null
+        fi
+    fi
+    [ -n "$(wmi_dir)" ] && { LOADED_BY_US=1; return 0; }
+    return 1
+}
+unload_driver() { [ "$LOADED_BY_US" = 1 ] && rmmod msi_wmi_platform 2>/dev/null; LOADED_BY_US=0; }
+getb() {   # getb <reg> -> two hex digits (value); returns 1 if the firmware did not answer with flag 01
+    local d f tmp r; d="$(wmi_dir)"; [ -n "$d" ] || return 1; tmp="$(mktemp "$RUN/.wi.XXXXXX" 2>/dev/null || mktemp)"
+    { printf "\\x$(printf %02x "$1")"; head -c 31 /dev/zero; } > "$tmp"; cat "$tmp" > "$d/get_data" 2>/dev/null; rm -f "$tmp"
+    r="$(head -c 2 "$d/get_data" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+    [ "${r:0:2}" = 01 ] && [ ${#r} = 4 ] && { echo "${r:2:2}"; return 0; }; return 1
+}
+setb() {   # setb <reg> <value 0-255>; verifies the firmware's flag
+    local d tmp r; d="$(wmi_dir)"; [ -n "$d" ] || return 1; tmp="$(mktemp "$RUN/.wo.XXXXXX" 2>/dev/null || mktemp)"
+    { printf "\\x$(printf %02x "$1")\\x$(printf %02x "$2")"; head -c 30 /dev/zero; } > "$tmp"; cat "$tmp" > "$d/set_data" 2>/dev/null; local rc=$?; rm -f "$tmp"
+    [ $rc = 0 ] || return 1
+    r="$(head -c 1 "$d/set_data" 2>/dev/null | od -An -tx1 | tr -d ' \n')"; [ "$r" = 01 ]
+}
+sim_get() { local v; v="$(getb $REG_SIM)" || return 1; echo $((16#$v)); }
+sim_bit() {   # sim_bit 1|0 : read-modify-write of bit 0 only, then verify
+    local v nv i; v="$(sim_get)" || return 1
+    [ "$1" = 1 ] && nv=$(( v | 1 )) || nv=$(( v & ~1 & 255 ))
+    [ "$nv" = "$v" ] && return 0
+    for i in 1 2 3; do setb $REG_SIM $nv && [ "$(sim_get)" = "$nv" ] && return 0; sleep 1; done
+    return 1
+}
+
+# ── charge limit (msi-ec / any power_supply with thresholds) ──
+lim_ok() { [ -w "$BAT/charge_control_end_threshold" ]; }
+lim_get() { echo "$(cat "$BAT/charge_control_start_threshold" 2>/dev/null || echo -1) $(cat "$BAT/charge_control_end_threshold" 2>/dev/null || echo -1)"; }
+lim_set() {   # lim_set <start> <end>   order matters on hysteresis drivers, so try both
+    lim_ok || return 0
+    local s=$1 e=$2
+    { echo "$e" > "$BAT/charge_control_end_threshold" && { [ "$s" -lt 0 ] || echo "$s" > "$BAT/charge_control_start_threshold"; }; } 2>/dev/null && return 0
+    { { [ "$s" -lt 0 ] || echo "$s" > "$BAT/charge_control_start_threshold"; } && echo "$e" > "$BAT/charge_control_end_threshold"; } 2>/dev/null
+}
+
+# ── restore (always safe) ──
+do_restore() {
+    local ok=1 s e line
+    if [ -n "$(wmi_dir)" ] || ensure_driver; then
+        sim_bit 0 || { ok=0; log "WARNING: could not clear the adapter simulation bit"; }
+    else
+        [ -f "$SAVE" ] && { ok=0; log "WARNING: driver unavailable, cannot clear the adapter simulation bit"; }
+    fi
+    if [ -f "$SAVE" ] && lim_ok; then
+        read -r s e < <(sed -n 's/^limits=//p' "$SAVE" | head -1)
+        [ -n "${e:-}" ] && { lim_set "${s:--1}" "$e" || { ok=0; log "WARNING: could not restore the charge limit"; }; }
+    fi
+    [ "$ok" = 1 ] && rm -f "$SAVE"
+    return $((1 - ok))
+}
+
+# ── subcommands ──
+cmd_status() {
+    local sup=no reason=""
+    if ! vendor_ok; then reason="not an MSI laptop"
+    elif ! wmi_present; then reason="the MSI WMI interface is not present on this laptop"
+    elif [ -z "$BAT" ]; then reason="no battery found"
+    elif [ -n "$(wmi_dir)" ] || modinfo msi-wmi-platform >/dev/null 2>&1 || (have dkms && dkms status 2>/dev/null | grep -q '^msi-wmi-platform'); then sup=maybe
+    else reason="the msi-wmi-platform driver is not installed (re-run the installer)"; fi
+    echo "supported=$sup"; [ -n "$reason" ] && echo "reason=$reason"
+    echo "running=$(running && echo yes || echo no)"
+    [ -f "$STATE" ] && cat "$STATE"
+    return 0
+}
+
+cmd_start() {
+    [ "$(id -u)" = 0 ] || { echo "start needs root" >&2; exit 2; }
+    local floor=20 a; for a in "$@"; do case "$a" in --floor=*) floor="${a#--floor=}" ;; esac; done
+    [[ "$floor" =~ ^[0-9]+$ ]] && [ "$floor" -ge 10 ] && [ "$floor" -le 50 ] || floor=20
+    vendor_ok && wmi_present && [ -n "$BAT" ] || { echo "reason=this laptop has no MSI WMI battery interface"; exit 3; }
+    running && { echo "reason=a calibration is already running"; exit 4; }
+    mkdir -p "$RUN" "$LIB"; chmod 755 "$RUN"
+    ensure_driver || { echo "reason=the msi-wmi-platform driver could not be loaded (kernel headers/DKMS, or this firmware is not supported)"; exit 3; }
+    local v; v="$(sim_get)" || { unload_driver; echo "reason=the firmware did not answer the adapter-simulation query"; exit 3; }
+    [ $((v & 1)) = 0 ] || { unload_driver; echo "reason=the adapter simulation is already on; run: mcontrolcenter-battery restore"; exit 4; }
+    [ "$(ac_online)" = 1 ] || { unload_driver; echo "reason=connect the charger first"; exit 4; }
+    [ "$(cap)" -ge 15 ] || { unload_driver; echo "reason=battery is below 15 %: let it charge a little first"; exit 4; }
+    unload_driver      # the run process loads it again; keeping the preflight free of side effects
+    rm -f "$STATE"; st state=starting "msg=Starting" "floor=$floor" "started=$(date +%s)"
+    local inh=(); have systemd-inhibit && inh=(systemd-inhibit --what=sleep:handle-lid-switch --who=MControlCenter "--why=Battery calibration")
+    systemd-run --unit="$UNIT" --collect --quiet --description="MControlCenter battery calibration" \
+        -p KillMode=mixed -p TimeoutStopSec=90 -p "ExecStopPost=$SELF restore" \
+        "${inh[@]}" "$SELF" run "--floor=$floor" || { echo "reason=could not start the background service"; exit 4; }
+    echo "started=yes"; exit 0
+}
+
+cmd_stop() {
+    [ "$(id -u)" = 0 ] || { echo "stop needs root" >&2; exit 2; }
+    if running; then systemctl stop "$UNIT"; else do_restore; fi
+    st state=cancelled "msg=Cancelled. Charger and charge limit restored."; exit 0
+}
+cmd_restore() { [ "$(id -u)" = 0 ] || { echo "restore needs root" >&2; exit 2; }; do_restore; local rc=$?; unload_driver; exit $rc; }
+cmd_boot() {   # nothing to do unless a run was cut short
+    [ "$(id -u)" = 0 ] || exit 2
+    running && exit 0
+    [ -f "$SAVE" ] || exit 0
+    log "a previous calibration did not finish: restoring the charger state and charge limit"
+    ensure_driver; do_restore; unload_driver; st state=aborted "msg=A previous calibration was interrupted (restart or power loss). Everything was restored."; exit 0
+}
+
+cleanup() {
+    local rc=$?
+    trap - EXIT INT TERM HUP
+    do_restore
+    local rr=$?
+    if [ -z "$FINAL" ]; then st state=aborted "msg=${REASON:-Stopped}. Charger and charge limit restored."
+    elif [ $rr != 0 ]; then st state=error "msg=Finished, but restoring the charger state failed. Run: pkexec mcontrolcenter-battery restore"; fi
+    unload_driver
+    exit $rc
+}
+
+cmd_run() {
+    [ "$(id -u)" = 0 ] || exit 2
+    local floor=20 a; for a in "$@"; do case "$a" in --floor=*) floor="${a#--floor=}" ;; esac; done
+    mkdir -p "$RUN" "$LIB"
+    exec 9>"$RUN/calibration.lock"; flock -n 9 || exit 6
+    trap cleanup EXIT; trap 'REASON="Cancelled"; exit 130' INT TERM HUP
+    ensure_driver || { REASON="The WMI driver could not be loaded"; exit 3; }
+    local bf; bf="$(sim_get)" || { REASON="The firmware did not answer"; exit 3; }
+    [ $((bf & 1)) = 0 ] || { REASON="Adapter simulation was already on"; exit 4; }
+    local ls le; read -r ls le < <(lim_get)
+    printf 'time=%s\nbf=%s\nlimits=%s %s\n' "$(date +%s)" "$bf" "$ls" "$le" > "$SAVE"; sync "$SAVE" 2>/dev/null     # written BEFORE anything is changed
+    local full0; full0="$(charge_full)"
+    local t0=$SECONDS now ref last_prog
+
+    # ── stage 1: charge to full (MSI: "Best for Mobility" first) ──
+    st state=charging "msg=Charging to 100 %. Keep the charger connected." stage=1 floor="$floor"
+    if lim_ok; then lim_set 99 100 || lim_set 95 100 || lim_set 90 100 || { REASON="Could not raise the charge limit"; exit 5; }; fi
+    ref="$(charge_now)"; last_prog=$SECONDS
+    while :; do
+        sleep 5
+        [ "$(ac_online)" = 1 ] || { REASON="The charger was disconnected"; exit 7; }
+        local c s; c="$(cap)"; s="$(bstatus)"
+        if [ "$c" -ge 100 ] || { [ "$c" -ge 98 ] && { [ "$s" = Full ] || [ "$s" = "Not charging" ]; }; }; then break; fi
+        local cn; cn="$(charge_now)"; local dif=$(( cn - ref )); dif=${dif#-}
+        if [ "$dif" -ge 15000 ]; then ref=$cn; last_prog=$SECONDS; fi
+        if [ $(( SECONDS - last_prog )) -ge 1200 ]; then
+            [ "$c" -ge 95 ] && break
+            REASON="Charging made no progress for 20 minutes (is the charger weak, or the laptop too hot?)"; exit 8
+        fi
+        [ $(( SECONDS - t0 )) -ge 28800 ] && { REASON="Charging took longer than 8 hours"; exit 8; }
+        st state=charging "msg=Charging to 100 %. Keep the charger connected." stage=1
+    done
+
+    # ── stage 2: simulate unplug, discharge to the floor ──
+    st state=discharging "msg=Discharging to $floor % with the charger still connected." stage=2
+    sim_bit 1 || { REASON="The firmware did not accept the adapter simulation"; exit 9; }
+    local i; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do [ "$(ac_online)" = 0 ] && break; sleep 1; done
+    [ "$(ac_online)" = 0 ] || { REASON="The firmware accepted the command but still reports the charger as connected"; exit 9; }
+    ref="$(charge_now)"; last_prog=$SECONDS; local t1=$SECONDS reasserts=0 lastcheck=$SECONDS
+    while :; do
+        sleep 5
+        local c; c="$(cap)"
+        if [ "$c" -le "$floor" ]; then break; fi
+        if [ "$c" -le 8 ]; then REASON="Battery reached a critical level ($c %)"; exit 10; fi
+        if [ $(( SECONDS - lastcheck )) -ge 15 ]; then            # MSI re-asserts the bit during the discharge too: firmware can drop it
+            lastcheck=$SECONDS; local v; v="$(sim_get)" || { REASON="Lost contact with the firmware"; exit 9; }
+            if [ $((v & 1)) = 0 ]; then reasserts=$((reasserts + 1)); [ $reasserts -le 20 ] || { REASON="The firmware keeps clearing the adapter simulation"; exit 9; }; sim_bit 1 || { REASON="Could not re-assert the adapter simulation"; exit 9; }; fi
+        fi
+        local cn; cn="$(charge_now)"; local dif=$(( cn - ref )); dif=${dif#-}
+        if [ "$dif" -ge 15000 ]; then ref=$cn; last_prog=$SECONDS; fi
+        [ $(( SECONDS - last_prog )) -ge 1200 ] && { REASON="The battery level did not change for 20 minutes"; exit 8; }
+        [ $(( SECONDS - t1 )) -ge 36000 ] && { REASON="Discharging took longer than 10 hours"; exit 8; }
+        st state=discharging "msg=Discharging to $floor % with the charger still connected." stage=2
+    done
+
+    # ── stage 3: hand everything back ──
+    local endpct; endpct="$(cap)"
+    st state=restoring "msg=Reconnecting the charger and restoring your charge limit." stage=3
+    FINAL=done
+    do_restore || { FINAL=done; }
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do [ "$(ac_online)" = 1 ] && break; sleep 1; done
+    st state=done "msg=Calibration complete. The battery went from 100 % down to $endpct % and is charging again." "end=$(date +%s)" "endpct=$endpct" "full_before=$full0" "full_after=$(charge_full)"
+    exit 0
+}
+
+CMD="${1:-status}"; shift || true
+case "$CMD" in
+    status) cmd_status ;; start) cmd_start "$@" ;; stop) cmd_stop ;; restore) cmd_restore ;; boot) cmd_boot ;; run) cmd_run "$@" ;;
+    *) echo "usage: $0 status|start|stop|restore|boot" >&2; exit 1 ;;
+esac

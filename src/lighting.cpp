@@ -20,7 +20,7 @@ QColor lerpC(const QColor &a, const QColor &b, double t) { t = qBound(0.0, t, 1.
 // ───────────────────────────── colour A / B + palette ─────────────────────────────
 class ColorPanel : public Panel {
 public:
-    ColorPanel(QWidget *p) : Panel("03", "COLOUR", p) { setMinimumHeight(330); }
+    ColorPanel(QWidget *p) : Panel("", "COLOUR", p) { setMinimumHeight(330); }
     QColor a = QColor(255, 75, 31), b = QColor(110, 170, 215); QVector<QColor> palette; int target = 0;           // 0 = A, 1 = B, 2.. = palette entries
     bool showPalette = false; std::function<void(const QColor &, int)> onColor; std::function<void(int)> onPalEdit;  // onPalEdit(+1 add, -1 remove)
     int h = 15, s = 255, v = 255;
@@ -75,7 +75,7 @@ static void drawSwatch(QPainter &p, const QRectF &r, const RgbProfile &pp) {
 class PresetPanel : public Panel {
 public:
     struct Preset { QString name; RgbProfile p; };
-    PresetPanel(QWidget *p) : Panel("05", "PRESETS", p) { setMinimumHeight(250); }
+    PresetPanel(QWidget *p) : Panel("", "PRESETS", p) { setMinimumHeight(250); }
     std::vector<Preset> items; std::function<void(const RgbProfile &)> onPick;
 protected:
     QRectF tiles[12]; int hot = -1;
@@ -95,7 +95,7 @@ protected:
 // ───────────────────────────── six saved profiles ─────────────────────────────
 class SlotsPanel : public Panel {
 public:
-    SlotsPanel(QWidget *p) : Panel("06", "MY PROFILES", p) { setMinimumHeight(250); for (int i = 0; i < 6; ++i) load(i); }
+    SlotsPanel(QWidget *p) : Panel("", "MY PROFILES", p) { setMinimumHeight(250); for (int i = 0; i < 6; ++i) load(i); }
     std::function<void(const RgbProfile &)> onLoad; std::function<RgbProfile()> current; bool saveMode = false; QString note;
     RgbProfile slot[6]; bool used[6] = {false, false, false, false, false, false};
 protected:
@@ -127,7 +127,7 @@ protected:
 class GroupsPanel : public Panel {
 public:
     struct Group { QString name; QSet<int> keys; };
-    GroupsPanel(QWidget *p) : Panel("08", "KEY GROUPS", p) { setMinimumHeight(330); load(); }
+    GroupsPanel(QWidget *p) : Panel("", "KEY GROUPS", p) { setMinimumHeight(330); load(); }
     std::function<QSet<int>()> currentKeys; std::function<void(const QSet<int> &)> onPick; QVector<Group> user; QString note;
 protected:
     QRectF quick[6], tiles[8], dels[8], bSave; int hot = -1;
@@ -202,7 +202,7 @@ LightingPage::LightingPage(QWidget *p) : AnimPage(p) {
     auto *grid = new QGridLayout(content); grid->setContentsMargins(18, 16, 18, 16); grid->setSpacing(10);
 
     kb = new KeyboardMap(content); colour = new ColorPanel(content); presets = new PresetPanel(content); slotPanel = new SlotsPanel(content);
-    groupsPanel = new GroupsPanel(content); effect = new RowsPanel("02", "EFFECT", content); tools = new RowsPanel("04", "PAINT TOOLS", content); follow = new RowsPanel("07", "FOLLOW THE LAPTOP", content);
+    groupsPanel = new GroupsPanel(content); effect = new RowsPanel("", "EFFECT", content); tools = new RowsPanel("", "PAINT TOOLS", content); follow = new RowsPanel("", "FOLLOW THE LAPTOP", content);
     status = new LightStatus(content); kb->setMinimumHeight(290);
     grid->addWidget(status, 0, 0, 1, 3); grid->addWidget(kb, 1, 0, 1, 3);
     grid->addWidget(effect, 2, 0); grid->addWidget(colour, 2, 1); grid->addWidget(presets, 2, 2);                       // Easy view: look, colour, presets

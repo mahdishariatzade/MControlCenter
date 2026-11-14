@@ -27,7 +27,7 @@ static std::vector<QString> modeNames() { return {"Turbo", "Balanced", "Silent",
 // ───────────────────────────── charge limit ─────────────────────────────
 class ChargePanel : public Panel {
 public:
-    ChargePanel(QWidget *p) : Panel("01", "CHARGE LIMIT", p) { setMinimumHeight(300); }
+    ChargePanel(QWidget *p) : Panel("", "CHARGE LIMIT", p) { setMinimumHeight(300); }
     int limit = 100, drag = -1, recommended = 0; bool supported = true; std::function<void(int)> onCommit;
     void setValue(int v) { if (drag < 0) limit = v; }
 protected:
@@ -72,7 +72,7 @@ BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
     scroll->setStyleSheet("QScrollArea { background: transparent; border: none; } QScrollArea > QWidget > QWidget { background: transparent; }");
     auto *content = new QWidget; scroll->setWidget(content); outer->addWidget(scroll);
     auto *grid = new QGridLayout(content); grid->setContentsMargins(18, 16, 18, 16); grid->setSpacing(10);
-    charge = new ChargePanel(content); info = new RowsPanel("02", "BATTERY", content); exercise = new RowsPanel("03", "BATTERY CALIBRATION", content);
+    charge = new ChargePanel(content); info = new RowsPanel("", "BATTERY", content); exercise = new RowsPanel("", "BATTERY CALIBRATION", content);
     charge->onCommit = [this](int v) { if (onLimit) onLimit(v); };
     charge->setFixedHeight(300);
     grid->addWidget(charge, 0, 0); grid->addWidget(info, 0, 1); grid->addWidget(exercise, 1, 0, 1, 2); grid->setColumnStretch(0, 3); grid->setColumnStretch(1, 2); grid->setRowStretch(2, 1);
@@ -86,16 +86,18 @@ BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
     for (const char *l : {"Your usage", "MSI recommends", "Last calibration", "Next due", "Lowest in 30 days"}) { Row r; r.type = Row::Info; r.label = l; exercise->rows.push_back(r); }
     { Row r; r.type = Row::Text; r.accent = true; exercise->rows.push_back(r); }
     { Row r; r.type = Row::Button; r.label = "Start calibration"; r.accent = true; r.click = [this] { if (onExercise) onExercise(exercise->rows[7].label.startsWith("Cancel") ? 4 : 3, 0); }; exercise->rows.push_back(r); }
-    { Row r; r.type = Row::Text; r.label = "Why: the battery's built-in gauge slowly loses track of its real capacity, especially when it sits at one level. MSI's own tool fixes that with a full charge, then a discharge, with the charger connected. This laptop cannot discharge while plugged in, so you do the discharge: the app charges to 100 %, tells you when to unplug, then when to plug back in at 20 %, and restores your normal limit. No memory effect: you never need to do this for any other reason. Storing the laptop for a long time? MSI suggests about 40 % charge and an EC reset."; exercise->rows.push_back(r); }
+    { Row r; r.type = Row::Text; r.label = "Why: the battery's built-in gauge slowly loses track of its real capacity, especially when it sits at one level. MSI's own tool fixes that with a full charge, then a discharge, then a recharge, all with the charger connected. On supported MSI laptops this app does exactly that by itself: it charges to 100 %, tells the firmware to behave as if the charger were unplugged (the same register MSI's tool uses), discharges to 20 %, then restores the charger and your normal limit. If your laptop cannot do that, a guided manual version is used instead: it charges to 100 %, tells you when to unplug, then when to plug back in at 20 %. No memory effect: you never need to do this for any other reason. Storing the laptop for a long time? MSI suggests about 40 % charge and an EC reset."; exercise->rows.push_back(r); }
     exercise->relayout();
 }
 void BatteryPage::setRecommended(int percent) { if (charge->recommended != percent) { charge->recommended = percent; charge->update(); } }
 void BatteryPage::setExercise(const ExerciseView &v) {
-    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11").arg(v.enabled).arg(v.stage).arg(v.due).arg(v.never).arg(v.last, v.next, v.lowest).arg(v.usage, v.rule).arg(v.cap).arg(v.target);
+    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11").arg(v.enabled).arg(v.stage).arg(v.due).arg(v.never).arg(v.last, v.next, v.lowest).arg(v.usage, v.rule).arg(v.cap).arg(v.target) + (v.autoRun ? "A" : "M");
     if (sig == exSig) return; exSig = sig;                       // only touch the layout when something visible changed
     auto &R = exercise->rows; R[0].on = v.enabled; for (int i = 1; i <= 8; ++i) R[i].visible = v.enabled;
     R[1].value = v.usage; R[2].value = v.rule; R[3].value = v.last; R[4].value = v.next; R[5].value = v.lowest;
-    R[6].label = v.stage == 1 ? QString("STEP 1 OF 2 · CHARGING TO 100 %: keep the charger connected. Now %1 %. I will tell you when to unplug.").arg(v.cap)
+    R[6].label = v.autoRun && v.stage == 1 ? QString("AUTOMATIC · STEP 1 OF 2 · CHARGING TO 100 %: nothing to do, keep the charger connected. Now %1 %.").arg(v.cap)
+               : v.autoRun && v.stage >= 2 ? QString("AUTOMATIC · STEP 2 OF 2 · DISCHARGING WITH THE CHARGER CONNECTED, down to %2 %. Now %1 %. Your laptop runs from the battery for a while; it recharges by itself afterwards and your normal charge limit comes back.").arg(v.cap).arg(v.target)
+               : v.stage == 1 ? QString("STEP 1 OF 2 · CHARGING TO 100 %: keep the charger connected. Now %1 %. I will tell you when to unplug.").arg(v.cap)
                : v.stage == 2 ? QString("STEP 2 OF 2 · DISCHARGING: unplug the charger and use the laptop normally. Now %1 %. I will tell you when to plug back in (at %2 %).").arg(v.cap).arg(v.target)
                : v.due ? QString("CALIBRATION DUE: when it suits you, press Start. It takes one charge and one normal day of use.")
                : v.never ? QString("Nothing to do yet. Tracking has started: the first reminder comes on %1.").arg(v.next) : QString("All good. Next calibration is due %1.").arg(v.next);
@@ -110,7 +112,7 @@ void BatteryPage::setHealth(const QString &status, const QString &health, const 
 // ───────────────────────────── fan curve editor ─────────────────────────────
 class CurvePanel : public Panel {
 public:
-    CurvePanel(QWidget *p) : Panel("01", "FAN CURVE", p) { setMinimumHeight(330); }
+    CurvePanel(QWidget *p) : Panel("", "FAN CURVE", p) { setMinimumHeight(330); }
     QVector<int> sp[2], tp[2]; int fan = 0; bool enabled = false, dirty = false; double liveT[2] = {0, 0}, liveP[2] = {-1, -1};
     std::function<void()> onEdit, onApply, onReset;
 protected:
@@ -173,7 +175,7 @@ protected:
 
 FanPage::FanPage(QWidget *p) : AnimPage(p) {
     auto *root = new QVBoxLayout(this); root->setContentsMargins(18, 16, 18, 16); root->setSpacing(10);
-    head = new RowsPanel("01", "FAN CONTROL", this); curve = new CurvePanel(this); curve->idx = "02";
+    head = new RowsPanel("", "FAN CONTROL", this); curve = new CurvePanel(this); 
     root->addWidget(head); root->addWidget(curve, 1); adopt(head, 0.0); adopt(curve, 0.12);
     Row sel; sel.type = Row::Segment; sel.opts = {"CPU fan", "GPU fan"}; sel.pick = [this](int i) { fan = i; head->rows[0].sel = i; curve->fan = i; head->update(); curve->update(); }; head->rows.push_back(sel);
     Row adv; adv.type = Row::Switch; adv.label = "Advanced fan control"; adv.sub = "Replace the firmware fan table with your own curve"; adv.click = [this] { if (onAdvanced) onAdvanced(!advanced); }; head->rows.push_back(adv);
@@ -191,7 +193,7 @@ void FanPage::setDirty(bool d) { curve->dirty = d; curve->update(); }
 ControlsPage::ControlsPage(QWidget *p) : AnimPage(p) {
     auto *root = new QHBoxLayout(this); root->setContentsMargins(18, 16, 18, 16); root->setSpacing(10);
     auto *left = new QVBoxLayout; left->setSpacing(10); auto *right = new QVBoxLayout; right->setSpacing(10);
-    profile = new RowsPanel("01", "POWER PROFILE", this); hardware = new RowsPanel("02", "HARDWARE SWITCHES", this); gpu = new RowsPanel("03", "DISCRETE GPU", this);
+    profile = new RowsPanel("", "POWER PROFILE", this); hardware = new RowsPanel("", "HARDWARE SWITCHES", this); gpu = new RowsPanel("", "DISCRETE GPU", this);
     left->addWidget(profile); left->addWidget(hardware); left->addStretch(1); right->addWidget(gpu); right->addStretch(1);
     root->addLayout(left, 1); root->addLayout(right, 1); adopt(profile, 0.0); adopt(hardware, 0.1); adopt(gpu, 0.2);
     { Row r; r.type = Row::Switch; r.label = "Follow system power profile"; r.sub = "Sync with the desktop power slider (KDE / GNOME)"; r.click = [this] { if (onFollowPpd) onFollowPpd(!profile->rows[0].on); }; profile->rows.push_back(r); }
@@ -235,7 +237,7 @@ void ControlsPage::rebuildGpuRows(const QString &reason, const QString &driver, 
 AboutPage::AboutPage(QWidget *p) : AnimPage(p) {
     auto *root = new QHBoxLayout(this); root->setContentsMargins(18, 16, 18, 16); root->setSpacing(10);
     auto *left = new QVBoxLayout; left->setSpacing(10); auto *right = new QVBoxLayout; right->setSpacing(10);
-    credits = new RowsPanel("01", "CREDITS", this); system = new RowsPanel("02", "THIS SYSTEM", this); links = new RowsPanel("03", "PROJECT", this);
+    credits = new RowsPanel("", "CREDITS", this); system = new RowsPanel("", "THIS SYSTEM", this); links = new RowsPanel("", "PROJECT", this);
     left->addWidget(credits); left->addStretch(1); right->addWidget(system); right->addWidget(links); right->addStretch(1);
     root->addLayout(left, 3); root->addLayout(right, 2); adopt(credits, 0.0); adopt(system, 0.1); adopt(links, 0.2);
     auto text = [&](const QString &t, bool acc = false) { Row r; r.type = Row::Text; r.label = t; r.accent = acc; credits->rows.push_back(r); };
@@ -264,7 +266,7 @@ void AboutPage::setInfo(const QString &v, const QString &qt, const QString &ec, 
 SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
     auto *root = new QHBoxLayout(this); root->setContentsMargins(18, 16, 18, 16); root->setSpacing(10);
     auto *l = new QVBoxLayout; l->setSpacing(10); auto *r = new QVBoxLayout; r->setSpacing(10);
-    startup = new RowsPanel("01", "STARTUP & ALERTS", this); automation = new RowsPanel("02", "AUTOMATION", this); data = new RowsPanel("03", "DATA", this);
+    startup = new RowsPanel("", "STARTUP & ALERTS", this); automation = new RowsPanel("", "AUTOMATION", this); data = new RowsPanel("", "DATA", this);
     l->addWidget(startup); l->addStretch(1); r->addWidget(automation); r->addWidget(data); r->addStretch(1);
     root->addLayout(l, 1); root->addLayout(r, 1); adopt(startup, 0.0); adopt(automation, 0.1); adopt(data, 0.2);
     { Row x; x.type = Row::Switch; x.label = "Start with my session"; x.sub = "Runs quietly in the system tray after login"; x.click = [this] { if (onChange) onChange(Autostart, startup->rows[0].on ? 0 : 1); }; startup->rows.push_back(x); }

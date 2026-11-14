@@ -20,7 +20,8 @@ if [ "$UNINSTALL" = 1 ]; then
     $SUDO systemctl disable --now mcontrolcenter-doctor.service 2>/dev/null || true
     $SUDO rm -vf /usr/bin/mcontrolcenter /usr/libexec/mcontrolcenter-helper /usr/share/applications/mcontrolcenter.desktop /etc/xdg/autostart/mcontrolcenter.desktop /etc/udev/rules.d/70-mcontrolcenter-rgb.rules \
         /usr/share/icons/hicolor/scalable/apps/mcontrolcenter.svg /usr/share/dbus-1/system.d/mcontrolcenter-helper.conf /usr/share/dbus-1/system-services/mcontrolcenter.helper.service \
-        /etc/systemd/system/mcontrolcenter-doctor.service /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy
+        /etc/systemd/system/mcontrolcenter-doctor.service /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.battery.policy /etc/systemd/system/mcontrolcenter-battery.service
+    $SUDO dkms remove msi-wmi-platform/1.0 --all 2>/dev/null || true; $SUDO rm -rf /usr/src/msi-wmi-platform-1.0
     $SUDO rm -rvf /usr/libexec/mcontrolcenter
     say "done (the msi-ec driver was left in place; remove it with: sudo dkms remove msi-ec --all)"; exit 0
 fi
@@ -47,6 +48,9 @@ $SUDO install -Dm644 src/helper/mcontrolcenter-helper.conf /usr/share/dbus-1/sys
 $SUDO install -Dm644 src/helper/mcontrolcenter.helper.service /usr/share/dbus-1/system-services/mcontrolcenter.helper.service
 $SUDO install -Dm755 scripts/mcontrolcenter-doctor /usr/libexec/mcontrolcenter/mcontrolcenter-doctor
 $SUDO install -Dm755 scripts/mcontrolcenter-gpu /usr/libexec/mcontrolcenter/mcontrolcenter-gpu
+$SUDO install -Dm755 scripts/mcontrolcenter-battery /usr/libexec/mcontrolcenter/mcontrolcenter-battery
+$SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.battery.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.battery.policy
+$SUDO install -Dm644 packaging/mcontrolcenter-battery.service /etc/systemd/system/mcontrolcenter-battery.service
 $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.gpu.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy
 $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy
 $SUDO install -Dm644 packaging/mcontrolcenter-doctor.service /etc/systemd/system/mcontrolcenter-doctor.service
@@ -55,7 +59,13 @@ $SUDO udevadm control --reload-rules 2>/dev/null || true; $SUDO udevadm trigger 
 $SUDO install -Dm644 packaging/mcontrolcenter-autostart.desktop /etc/xdg/autostart/mcontrolcenter.desktop
 $SUDO systemctl daemon-reload
 $SUDO systemctl reload dbus 2>/dev/null || true
-$SUDO systemctl enable mcontrolcenter-doctor.service >/dev/null 2>&1 || true   # boot-time self-heal after kernel updates
+$SUDO systemctl enable mcontrolcenter-doctor.service mcontrolcenter-battery.service >/dev/null 2>&1 || true   # boot-time self-heal after kernel updates / interrupted calibration
+# automatic battery calibration needs MSI's WMI platform driver: use the kernel's own if present, else register the DKMS copy (built per kernel)
+if grep -qiE 'micro-star|msi' /sys/class/dmi/id/sys_vendor 2>/dev/null && ! modinfo msi-wmi-platform >/dev/null 2>&1 && command -v dkms >/dev/null 2>&1; then
+    say "registering the msi-wmi-platform driver (for automatic battery calibration)"
+    $SUDO rm -rf /usr/src/msi-wmi-platform-1.0; $SUDO mkdir -p /usr/src/msi-wmi-platform-1.0; $SUDO cp packaging/msi-wmi-platform/* /usr/src/msi-wmi-platform-1.0/
+    $SUDO dkms add msi-wmi-platform/1.0 >/dev/null 2>&1 || true; $SUDO dkms install msi-wmi-platform/1.0 >/dev/null 2>&1 || say "msi-wmi-platform did not build (needs kernel headers); battery calibration will use the manual guide"
+fi
 
 if [ "$DRIVER" = 1 ]; then
     say "checking the msi-ec driver"

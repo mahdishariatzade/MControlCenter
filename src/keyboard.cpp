@@ -58,7 +58,7 @@ QVector<int> KeyMap::zonesBottomUp() const {
 }
 
 // ───────────────────────────── widget ─────────────────────────────
-KeyboardMap::KeyboardMap(QWidget *p) : Panel("01", "KEYBOARD", p) { setMinimumHeight(300); map = KeyMap::load(); }
+KeyboardMap::KeyboardMap(QWidget *p) : Panel("", "KEYBOARD", p) { setMinimumHeight(300); map = KeyMap::load(); }
 
 QRectF KeyboardMap::keyRect(int i) const { const QRectF &r = keyboardLayout()[i].r; return QRectF(origin.x() + r.x() * scale, origin.y() + r.y() * scale, r.width() * scale, r.height() * scale).adjusted(2, 2, -2, -2); }
 int KeyboardMap::keyAt(QPointF pt) const { for (int i = 0; i < keyboardLayout().size(); ++i) if (keyRect(i).contains(pt)) return i; return -1; }
