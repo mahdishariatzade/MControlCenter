@@ -14,11 +14,11 @@ static QJsonArray colorsToJson(const QVector<QColor> &v) { QJsonArray a; for (co
 static QVector<QColor> colorsFromJson(const QJsonArray &a, const QVector<QColor> &def) { QVector<QColor> v; for (const QJsonValue &x : a) { QColor c(x.toString()); if (c.isValid()) v << c; } return v.isEmpty() ? def : v; }
 QJsonObject RgbProfile::toJson() const {
     QJsonObject o; o["mode"] = int(mode); o["color"] = color.name(); o["zones"] = colorsToJson(zones); o["palette"] = colorsToJson(palette);
-    o["brightness"] = brightness; o["speed"] = speed; o["direction"] = direction; return o;
+    o["colorB"] = colorB.name(); o["meterSource"] = meterSource; o["brightness"] = brightness; o["speed"] = speed; o["direction"] = direction; return o;
 }
 RgbProfile RgbProfile::fromJson(const QJsonObject &o) {
     RgbProfile p; if (o.isEmpty()) return p;
-    p.mode = Mode(qBound(0, o["mode"].toInt(0), int(Off))); QColor c(o["color"].toString()); if (c.isValid()) p.color = c;
+    p.mode = Mode(qBound(0, o["mode"].toInt(0), int(Meter))); QColor cb(o["colorB"].toString()); if (cb.isValid()) p.colorB = cb; p.meterSource = qBound(0, o["meterSource"].toInt(0), 1); QColor c(o["color"].toString()); if (c.isValid()) p.color = c;
     p.zones = colorsFromJson(o["zones"].toArray(), p.zones); while (p.zones.size() < 24) p.zones << p.color; p.zones.resize(24);
     p.palette = colorsFromJson(o["palette"].toArray(), p.palette); if (p.palette.size() > 4) p.palette.resize(4);
     p.brightness = qBound(0, o["brightness"].toInt(100), 100); p.speed = qBound(0, o["speed"].toInt(1), 2); p.direction = o["direction"].toInt(1) ? 1 : 0; return p;
@@ -79,6 +79,8 @@ bool MysticLight::apply(const RgbProfile &p) {
         case RgbProfile::Breathing: return selectAll() && effect(2, speedTicks[p.speed], 1, pal);
         case RgbProfile::Cycle: return selectAll() && effect(3, speedTicks[p.speed], 1, pal);
         case RgbProfile::Wave: return selectAll() && effect(4, speedTicks[p.speed], p.direction, pal);
+        case RgbProfile::Meter:                     // the caller expands a meter into Zones before sending; as a fallback show colour A
+            return selectAll() && effect(1, 100, 1, {scaled(p.color, p.brightness)});
         case RgbProfile::Zones: {
             // one select + one static packet per DISTINCT colour (zones sharing a colour are set together)
             QMap<QRgb, quint32> groups; for (int z = 0; z < zones && z < p.zones.size(); ++z) groups[scaled(p.zones[z], p.brightness).rgb()] |= (1u << z);
@@ -87,12 +89,17 @@ bool MysticLight::apply(const RgbProfile &p) {
     }
     return false;
 }
+bool MysticLight::blinkZone(int z) {
+    if (!isOpen() || z < 0 || z >= zones) return false;
+    return selectAll() && effect(0, 100, 1, {QColor(0, 0, 0)}) && selectMask(1u << z) && effect(2, 90, 1, {QColor(255, 0, 0), QColor(0, 0, 0)});   // fast red breathing on one zone: easy to spot in daylight
+}
 bool MysticLight::reloadStored() { return isOpen() && send(QByteArray::fromHex("02b0")); }
 
 // ───────────────────────────── worker ─────────────────────────────
 bool RgbWorker::ensure() { if (dev.isOpen()) return true; bool ok = dev.open(); emit state(ok, dev.zoneCount(), dev.deviceName(), dev.error()); return ok; }
 void RgbWorker::probe() { dev.close(); ensure(); }
 void RgbWorker::apply(const RgbProfile &p) { if (!ensure()) return; if (!dev.apply(p)) { emit state(false, dev.zoneCount(), dev.deviceName(), dev.error()); } }
+void RgbWorker::previewZone(int zone) { if (ensure()) dev.blinkZone(zone); }
 void RgbWorker::reloadStored() { if (ensure()) dev.reloadStored(); }
 void RgbWorker::flash(const QColor &c, int times, const RgbProfile &then) {
     if (!ensure()) return; RgbProfile f; f.mode = RgbProfile::Static; f.color = c; f.brightness = 100;

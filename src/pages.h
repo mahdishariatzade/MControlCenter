@@ -67,21 +67,24 @@ private:
     kit::RowsPanel *head; CurvePanel *curve; int fan = 0; bool two = false, advanced = false;
 };
 
-class ZoneMatrix; class ColorPanel; class PresetPanel;
+class KeyboardMap; class ColorPanel; class PresetPanel; class SlotsPanel; struct KeyMap;
 class LightingPage : public AnimPage {
 public:
     explicit LightingPage(QWidget *p);
     void setDevice(bool present, int zones, const QString &name, const QString &error);
     void setProfile(const RgbProfile &p);
     void setFollow(bool mode, bool thermal, bool lowBat, bool lock);
+    KeyMap keyMap() const;
     std::function<void(const RgbProfile &)> onProfile;
     std::function<void(int, bool)> onFollow;           // 0 power mode, 1 thermal flash, 2 low-battery pulse, 3 off on lock
-    std::function<void()> onRestoreFirmware;
+    std::function<void()> onRestoreFirmware, onMapChanged;
+    std::function<void(int)> onPreviewZone;            // calibration: blink this zone
+    std::function<void(bool)> onCalibrating;           // calibration started / finished
 protected:
-    void changed(); void syncRows(); void applyColor(const QColor &c);
+    void changed(); void syncRows(); void applyColor(const QColor &c, int target); void paintTool(int tool);
 private:
-    RgbProfile prof; int palSel = 0; bool present = false; int zones = 24;
-    ZoneMatrix *matrix; ColorPanel *colour; PresetPanel *presets; kit::RowsPanel *effect, *follow;
+    RgbProfile prof; bool present = false; int zones = 24;
+    KeyboardMap *kb; ColorPanel *colour; PresetPanel *presets; SlotsPanel *slotPanel; kit::RowsPanel *effect, *tools, *follow;
 };
 
 class SettingsPage : public AnimPage {

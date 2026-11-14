@@ -56,6 +56,7 @@ private:
     QTimer gameTimer; bool gameActive = false; int gameSavedMode = -1; bool gameSavedBoost = false; qint64 hotSince = 0; qint64 lastAlertMs = 0;
     void settingChanged(SettingsPage::Item what, int value); void gameModeTick(); void thermalWatch(const Snapshot &s); void syncSettingsPage();
     LightingPage *lightingPage = nullptr; RgbWorker *rgb = nullptr; QThread rgbThread; QTimer rgbDebounce;
+    bool rgbCalibrating = false; int rgbBattery = 100; QJsonObject rgbLastSent;
     RgbProfile rgbUser; bool rgbChosen = false, rgbFollowMode = false, rgbFlashThermal = false, rgbPulseLow = false, rgbOffOnLock = false, rgbLocked = false, rgbLowBat = false, rgbPresent = false; int rgbLastMode = -2;
     RgbProfile rgbEffective() const; void rgbPush(); void rgbSave(); void rgbLoad(); void onScreenLocked(bool locked);
     void buildPages();

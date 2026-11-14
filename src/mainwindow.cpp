@@ -20,6 +20,7 @@
 #include "./ui_mainwindow.h"
 #include "operate.h"
 #include "settings.h"
+#include "keyboard.h"
 #include <QTimer>
 #include <QMessageBox>
 #include <QJsonObject>
@@ -201,7 +202,7 @@ MainWindow::MainWindow(QWidget *parent)
         lastGpuState = !sn.gpuSupported ? "none" : (sn.gpuDriver == "none" || sn.gpuDriver.isEmpty()) ? "off" : sn.gpuPower.startsWith("D3") ? "asleep" : "awake";
         dashboard->applySnapshot(sn); syncPages(sn); thermalWatch(sn);
         { bool low = sn.cap > 0 && sn.cap <= 15 && !sn.ac && sn.status == "Discharging"; bool changedState = low != rgbLowBat || (rgbFollowMode && sn.msiEc && sn.d.mode != rgbLastMode);
-          rgbLowBat = low; if (sn.msiEc) rgbLastMode = sn.d.mode; if (changedState) rgbPush(); }
+          rgbLowBat = low; rgbBattery = sn.cap; if (sn.msiEc) rgbLastMode = sn.d.mode; if (changedState || rgbUser.mode == RgbProfile::Meter) rgbPush(); }
     });
     sensorThread.start();
     rgb = new RgbWorker; rgb->moveToThread(&rgbThread);                       // keyboard lighting: its own thread, the GUI never waits on USB
@@ -209,7 +210,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(rgb, &RgbWorker::state, this, [this](bool present, int zones, const QString &name, const QString &error) {
         bool was = rgbPresent; rgbPresent = present; if (lightingPage) lightingPage->setDevice(present, zones, name, error); if (present && !was) rgbPush(); });
     rgbDebounce.setSingleShot(true); rgbDebounce.setInterval(40);
-    connect(&rgbDebounce, &QTimer::timeout, this, [this] { QMetaObject::invokeMethod(rgb, "apply", Qt::QueuedConnection, Q_ARG(RgbProfile, rgbEffective())); });
+    connect(&rgbDebounce, &QTimer::timeout, this, [this] { const RgbProfile e = rgbEffective(); const QJsonObject sig = e.toJson(); if (sig == rgbLastSent) return; rgbLastSent = sig; QMetaObject::invokeMethod(rgb, "apply", Qt::QueuedConnection, Q_ARG(RgbProfile, e)); });
     rgbThread.start(); rgbLoad(); QMetaObject::invokeMethod(rgb, "probe", Qt::QueuedConnection);
     for (const char *svc : {"org.freedesktop.ScreenSaver", "org.gnome.ScreenSaver"}) for (const char *path : {"/ScreenSaver", "/org/freedesktop/ScreenSaver", "/org/gnome/ScreenSaver"})
         QDBusConnection::sessionBus().connect(QString(), path, svc, "ActiveChanged", this, SLOT(onScreenLockedSlot(bool)));
@@ -1245,6 +1246,9 @@ void MainWindow::buildPages() {
         if (what == 0) rgbFollowMode = on; else if (what == 1) rgbFlashThermal = on; else if (what == 2) rgbPulseLow = on; else rgbOffOnLock = on;
         rgbSave(); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock); rgbPush(); };
     lightingPage->onRestoreFirmware = [this] { rgbChosen = false; rgbFollowMode = rgbPulseLow = rgbOffOnLock = false; rgbSave(); lightingPage->setFollow(false, rgbFlashThermal, false, false); QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection); };
+    lightingPage->onPreviewZone = [this](int z) { QMetaObject::invokeMethod(rgb, "previewZone", Qt::QueuedConnection, Q_ARG(int, z)); };
+    lightingPage->onCalibrating = [this](bool on) { bool was = rgbCalibrating; rgbCalibrating = on; if (was && !on) { rgbLastSent = QJsonObject(); rgbPush(); } };      // calibration owns the keyboard until it ends
+    lightingPage->onMapChanged = [this] { rgbLastSent = QJsonObject(); rgbPush(); };
     lightingPage->setProfile(rgbUser); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock);
     ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->debugTab));
     settingsPage->onChange = [this](SettingsPage::Item w, int v) { settingChanged(w, v); };
@@ -1407,12 +1411,19 @@ void MainWindow::rgbSave() {
 // Precedence: screen locked (off) > low battery (red pulse) > power-mode colour > the user's own lighting.
 RgbProfile MainWindow::rgbEffective() const {
     RgbProfile p = rgbUser;
+    if (p.mode == RgbProfile::Meter) {                                                  // expand the gauge into per-zone colours, filled from the bottom of the keyboard up
+        const KeyMap km = lightingPage ? lightingPage->keyMap() : KeyMap::load(); const QVector<int> order = km.zonesBottomUp();
+        const bool temp = p.meterSource == 0; const double frac = temp ? qBound(0.0, (dashData.cpuTemp - 35) / 60.0, 1.0) : qBound(0.0, rgbBattery / 100.0, 1.0);
+        const int lit = order.isEmpty() ? 0 : int(frac * order.size() + 0.5); const QColor on = temp ? QColor::fromHsv(int((1.0 - frac) * 120), 255, 255) : QColor::fromHsv(int(frac * 120), 255, 255);
+        p.zones = QVector<QColor>(24, QColor(0, 0, 0)); for (int i = 0; i < lit && i < order.size(); ++i) p.zones[order[i]] = on; p.mode = RgbProfile::Zones;
+    }
     if (rgbFollowMode && dashData.mode >= 0 && dashData.mode < 4) { p.mode = RgbProfile::Static; p.color = kModeLight[dashData.mode]; }
     if (rgbPulseLow && rgbLowBat) { p.mode = RgbProfile::Breathing; p.palette = {QColor(255, 20, 20)}; p.speed = 0; p.brightness = 100; }
     if (rgbOffOnLock && rgbLocked) p.mode = RgbProfile::Off;
     return p;
 }
 void MainWindow::rgbPush() {
+    if (rgbCalibrating) return;
     const bool managed = rgbChosen || rgbFollowMode || rgbPulseLow || rgbOffOnLock;         // never touch the keyboard until the user has chosen something
     if (managed) rgbDebounce.start();
 }

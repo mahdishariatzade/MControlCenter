@@ -32,6 +32,8 @@ set(PROJECT_SOURCES
     src/sensors.cpp src/sensors.h
     src/pages.cpp src/pages.h src/uikit.h
     src/rgb.cpp src/rgb.h
+    src/keyboard.cpp src/keyboard.h
+    src/lighting.cpp
     src/bridge.cpp src/bridge.h
     src/resources.qrc
 )

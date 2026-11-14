@@ -12,9 +12,11 @@
 #include <QString>
 
 struct RgbProfile {
-    enum Mode { Static, Zones, Breathing, Cycle, Wave, Off };
+    enum Mode { Static, Zones, Breathing, Cycle, Wave, Off, Meter };
     Mode mode = Static;
     QColor color = QColor(255, 75, 31);
+    QColor colorB = QColor(110, 170, 215);           // secondary colour (gradients)
+    int meterSource = 0;                             // Meter mode: 0 CPU temperature, 1 battery level
     QVector<QColor> zones = QVector<QColor>(24, QColor(255, 75, 31));
     QVector<QColor> palette = {QColor(255, 75, 31), QColor(255, 176, 32), QColor(110, 170, 215)};     // colours of the hardware effects
     int brightness = 100;           // 0..100 (applied by scaling the colours)
@@ -37,6 +39,7 @@ public:
     QString deviceName() const { return name; }
     QString error() const { return err; }
     bool apply(const RgbProfile &p);
+    bool blinkZone(int zone);                      // calibration: blink exactly one zone red, everything else dark
     bool reloadStored();                           // ask the keyboard to go back to the lighting stored in its own flash
 private:
     bool send(const QByteArray &payload);
@@ -56,6 +59,7 @@ public slots:
     void apply(const RgbProfile &p);
     void flash(const QColor &c, int times, const RgbProfile &then);   // short attention flash, then back to `then`
     void reloadStored();
+    void previewZone(int zone);                    // calibration helper (not persisted anywhere)
 signals:
     void state(bool present, int zones, const QString &name, const QString &error);
 private:
