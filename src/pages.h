@@ -8,6 +8,7 @@
 #include <functional>
 #include <vector>
 #include "dashboard.h"
+#include "rgb.h"
 
 namespace kit { class Panel; class RowsPanel; }
 class ChargePanel; class CurvePanel; struct Snapshot;
@@ -64,6 +65,23 @@ public:
     std::function<void(bool)> onAdvanced; std::function<void()> onApply, onReset;
 private:
     kit::RowsPanel *head; CurvePanel *curve; int fan = 0; bool two = false, advanced = false;
+};
+
+class ZoneMatrix; class ColorPanel; class PresetPanel;
+class LightingPage : public AnimPage {
+public:
+    explicit LightingPage(QWidget *p);
+    void setDevice(bool present, int zones, const QString &name, const QString &error);
+    void setProfile(const RgbProfile &p);
+    void setFollow(bool mode, bool thermal, bool lowBat, bool lock);
+    std::function<void(const RgbProfile &)> onProfile;
+    std::function<void(int, bool)> onFollow;           // 0 power mode, 1 thermal flash, 2 low-battery pulse, 3 off on lock
+    std::function<void()> onRestoreFirmware;
+protected:
+    void changed(); void syncRows(); void applyColor(const QColor &c);
+private:
+    RgbProfile prof; int palSel = 0; bool present = false; int zones = 24;
+    ZoneMatrix *matrix; ColorPanel *colour; PresetPanel *presets; kit::RowsPanel *effect, *follow;
 };
 
 class SettingsPage : public AnimPage {

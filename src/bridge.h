@@ -20,10 +20,16 @@ public slots:
     void SetCoolerBoost(bool on) { emit coolerBoostRequested(on); }
     void SetChargeLimit(int percent) { if (percent >= 20 && percent <= 100) emit chargeLimitRequested(percent); }
     void ShowWindow() { emit showRequested(); }
+    void SetKeyboardColor(const QString &hex) { emit keyboardColor(hex); }        // e.g. "#ff4b1f"
+    void KeyboardOff() { emit keyboardOff(); }
+    void KeyboardRestore() { emit keyboardRestore(); }                            // back to the keyboard's own stored lighting
 signals:
     void modeRequested(int mode);
     void coolerBoostRequested(bool on);
     void chargeLimitRequested(int percent);
     void showRequested();
+    void keyboardColor(const QString &hex);
+    void keyboardOff();
+    void keyboardRestore();
 };
 #endif

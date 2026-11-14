@@ -27,6 +27,7 @@
 #include <QJsonDocument>
 #include <QFile>
 #include <QProcess>
+#include <QJsonDocument>
 #include <QStandardPaths>
 #include <QDateTime>
 #include <QDir>
@@ -199,13 +200,27 @@ MainWindow::MainWindow(QWidget *parent)
         lastGpuSupported = sn.gpuSupported; lastGpuMode = sn.gpuMode;
         lastGpuState = !sn.gpuSupported ? "none" : (sn.gpuDriver == "none" || sn.gpuDriver.isEmpty()) ? "off" : sn.gpuPower.startsWith("D3") ? "asleep" : "awake";
         dashboard->applySnapshot(sn); syncPages(sn); thermalWatch(sn);
+        { bool low = sn.cap > 0 && sn.cap <= 15 && !sn.ac && sn.status == "Discharging"; bool changedState = low != rgbLowBat || (rgbFollowMode && sn.msiEc && sn.d.mode != rgbLastMode);
+          rgbLowBat = low; if (sn.msiEc) rgbLastMode = sn.d.mode; if (changedState) rgbPush(); }
     });
     sensorThread.start();
+    rgb = new RgbWorker; rgb->moveToThread(&rgbThread);                       // keyboard lighting: its own thread, the GUI never waits on USB
+    connect(&rgbThread, &QThread::finished, rgb, &QObject::deleteLater);
+    connect(rgb, &RgbWorker::state, this, [this](bool present, int zones, const QString &name, const QString &error) {
+        bool was = rgbPresent; rgbPresent = present; if (lightingPage) lightingPage->setDevice(present, zones, name, error); if (present && !was) rgbPush(); });
+    rgbDebounce.setSingleShot(true); rgbDebounce.setInterval(40);
+    connect(&rgbDebounce, &QTimer::timeout, this, [this] { QMetaObject::invokeMethod(rgb, "apply", Qt::QueuedConnection, Q_ARG(RgbProfile, rgbEffective())); });
+    rgbThread.start(); rgbLoad(); QMetaObject::invokeMethod(rgb, "probe", Qt::QueuedConnection);
+    for (const char *svc : {"org.freedesktop.ScreenSaver", "org.gnome.ScreenSaver"}) for (const char *path : {"/ScreenSaver", "/org/freedesktop/ScreenSaver", "/org/gnome/ScreenSaver"})
+        QDBusConnection::sessionBus().connect(QString(), path, svc, "ActiveChanged", this, SLOT(onScreenLockedSlot(bool)));
     bridge = new ControlBridge(this);
     bridge->stateFn = [this] { QMetaObject::invokeMethod(sensors, "pollNow", Qt::QueuedConnection); return stateJson(); };   // last snapshot now, a fresh one is already on its way
     connect(bridge, &ControlBridge::modeRequested, this, &MainWindow::setModeIndex);
     connect(bridge, &ControlBridge::coolerBoostRequested, this, [this](bool on) { setCoolerBoostState(on); });
     connect(bridge, &ControlBridge::chargeLimitRequested, this, &MainWindow::setChargeLimit);
+    connect(bridge, &ControlBridge::keyboardColor, this, [this](const QString &hex) { QColor c(hex); if (!c.isValid()) return; rgbUser.mode = RgbProfile::Static; rgbUser.color = c; rgbChosen = true; rgbSave(); if (lightingPage) lightingPage->setProfile(rgbUser); rgbPush(); });
+    connect(bridge, &ControlBridge::keyboardOff, this, [this] { rgbUser.mode = RgbProfile::Off; rgbChosen = true; rgbSave(); if (lightingPage) lightingPage->setProfile(rgbUser); rgbPush(); });
+    connect(bridge, &ControlBridge::keyboardRestore, this, [this] { rgbChosen = false; QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection); });
     connect(bridge, &ControlBridge::showRequested, this, [this] { showNormal(); raise(); activateWindow(); });
     QDBusConnection::sessionBus().registerObject("/Control", bridge, QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals);
 
@@ -252,7 +267,7 @@ MainWindow::MainWindow(QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
-    sensorThread.quit(); sensorThread.wait(2000);
+    sensorThread.quit(); sensorThread.wait(2000); rgbThread.quit(); rgbThread.wait(2000);
     delete ui;
 }
 
@@ -759,6 +774,7 @@ void MainWindow::timerSleepTimeout() {
     if (msecsSinceTimeout > timerSleepWatcher.interval() + 5000) {
         // Went to sleep for at least 5 seconds
         operate.handleWakeEvent();
+        QMetaObject::invokeMethod(rgb, "probe", Qt::QueuedConnection);          // the keyboard re-enumerates after sleep; the state signal re-applies the lighting
     }
 }
 
@@ -1220,9 +1236,16 @@ void MainWindow::buildPages() {
     controlsPage = new ControlsPage(this); batteryPage = new BatteryPage(this); fanPage = new FanPage(this); aboutPage = new AboutPage(this);
     auto swap = [this](QWidget *old, QWidget *neu, const QString &title) {      // the old widgets stay alive (hidden) as the backend the slots already know
         int i = ui->tabWidget->indexOf(old); if (i < 0) return; ui->tabWidget->removeTab(i); ui->tabWidget->insertTab(i, neu, title); };
-    settingsPage = new SettingsPage(this);
+    settingsPage = new SettingsPage(this); lightingPage = new LightingPage(this);
     swap(ui->overviewTab, controlsPage, tr("Controls")); swap(ui->batteryTab, batteryPage, tr("Battery")); swap(ui->fanControlTab, fanPage, tr("Fans")); swap(ui->aboutTab, aboutPage, tr("About"));
+    ui->tabWidget->insertTab(ui->tabWidget->indexOf(aboutPage), lightingPage, tr("Lighting"));
     ui->tabWidget->insertTab(ui->tabWidget->indexOf(aboutPage), settingsPage, tr("Settings"));
+    lightingPage->onProfile = [this](const RgbProfile &p) { rgbUser = p; rgbChosen = true; rgbSave(); rgbPush(); };
+    lightingPage->onFollow = [this](int what, bool on) {
+        if (what == 0) rgbFollowMode = on; else if (what == 1) rgbFlashThermal = on; else if (what == 2) rgbPulseLow = on; else rgbOffOnLock = on;
+        rgbSave(); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock); rgbPush(); };
+    lightingPage->onRestoreFirmware = [this] { rgbChosen = false; rgbFollowMode = rgbPulseLow = rgbOffOnLock = false; rgbSave(); lightingPage->setFollow(false, rgbFlashThermal, false, false); QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection); };
+    lightingPage->setProfile(rgbUser); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock);
     ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->debugTab));
     settingsPage->onChange = [this](SettingsPage::Item w, int v) { settingChanged(w, v); };
     connect(&gameTimer, &QTimer::timeout, this, &MainWindow::gameModeTick); gameTimer.setInterval(5000);
@@ -1350,7 +1373,7 @@ void MainWindow::thermalWatch(const Snapshot &sn) {
     const int level = kThermalLevels[qBound(0, s.getValue("Settings/thermalLevel").toInt(), 2)]; const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (sn.d.cpuTemp < level) { hotSince = 0; return; }
     if (!hotSince) hotSince = now;
-    if (now - hotSince >= 10000 && now - lastAlertMs > 300000 && trayIcon) { lastAlertMs = now; trayIcon->showMessage("MControlCenter", tr("CPU has been at %1 °C for 10 seconds. Cooler Boost or a quieter workload would help.").arg(sn.d.cpuTemp), QSystemTrayIcon::Warning, 8000); }
+    if (now - hotSince >= 10000 && now - lastAlertMs > 300000 && trayIcon) { lastAlertMs = now; if (rgbFlashThermal && rgbPresent) QMetaObject::invokeMethod(rgb, "flash", Qt::QueuedConnection, Q_ARG(QColor, QColor(255, 0, 0)), Q_ARG(int, 3), Q_ARG(RgbProfile, rgbEffective())); trayIcon->showMessage("MControlCenter", tr("CPU has been at %1 °C for 10 seconds. Cooler Boost or a quieter workload would help.").arg(sn.d.cpuTemp), QSystemTrayIcon::Warning, 8000); }
 }
 
 // Feral GameMode integration: Turbo + Cooler Boost while any game holds a GameMode request, then restore exactly what the user had.
@@ -1368,3 +1391,29 @@ void MainWindow::gameModeTick() {
         if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Game finished: back to your previous mode."), QSystemTrayIcon::Information, 3000);
     }
 }
+
+// ───────────────────────────── keyboard lighting policy ─────────────────────────────
+static const QColor kModeLight[4] = {QColor(255, 75, 31), QColor(240, 232, 210), QColor(110, 170, 215), QColor(150, 205, 90)};
+
+void MainWindow::rgbLoad() {
+    Settings s; const QString j = s.getValue("Rgb/profile").toString();
+    if (!j.isEmpty()) { rgbUser = RgbProfile::fromJson(QJsonDocument::fromJson(j.toUtf8()).object()); rgbChosen = true; }
+    rgbFollowMode = s.getValue("Rgb/followMode").toBool(); rgbFlashThermal = s.getValue("Rgb/flashThermal").toBool(); rgbPulseLow = s.getValue("Rgb/pulseLow").toBool(); rgbOffOnLock = s.getValue("Rgb/offOnLock").toBool();
+}
+void MainWindow::rgbSave() {
+    Settings::setValue("Rgb/profile", QString::fromUtf8(QJsonDocument(rgbUser.toJson()).toJson(QJsonDocument::Compact)));
+    Settings::setValue("Rgb/followMode", rgbFollowMode); Settings::setValue("Rgb/flashThermal", rgbFlashThermal); Settings::setValue("Rgb/pulseLow", rgbPulseLow); Settings::setValue("Rgb/offOnLock", rgbOffOnLock);
+}
+// Precedence: screen locked (off) > low battery (red pulse) > power-mode colour > the user's own lighting.
+RgbProfile MainWindow::rgbEffective() const {
+    RgbProfile p = rgbUser;
+    if (rgbFollowMode && dashData.mode >= 0 && dashData.mode < 4) { p.mode = RgbProfile::Static; p.color = kModeLight[dashData.mode]; }
+    if (rgbPulseLow && rgbLowBat) { p.mode = RgbProfile::Breathing; p.palette = {QColor(255, 20, 20)}; p.speed = 0; p.brightness = 100; }
+    if (rgbOffOnLock && rgbLocked) p.mode = RgbProfile::Off;
+    return p;
+}
+void MainWindow::rgbPush() {
+    const bool managed = rgbChosen || rgbFollowMode || rgbPulseLow || rgbOffOnLock;         // never touch the keyboard until the user has chosen something
+    if (managed) rgbDebounce.start();
+}
+void MainWindow::onScreenLocked(bool locked) { if (rgbLocked == locked) return; rgbLocked = locked; rgbPush(); }

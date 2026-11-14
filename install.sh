@@ -18,7 +18,7 @@ FAMILY="${ID:-} ${ID_LIKE:-}"
 if [ "$UNINSTALL" = 1 ]; then
     say "removing MControlCenter"
     $SUDO systemctl disable --now mcontrolcenter-doctor.service 2>/dev/null || true
-    $SUDO rm -vf /usr/bin/mcontrolcenter /usr/libexec/mcontrolcenter-helper /usr/share/applications/mcontrolcenter.desktop /etc/xdg/autostart/mcontrolcenter.desktop \
+    $SUDO rm -vf /usr/bin/mcontrolcenter /usr/libexec/mcontrolcenter-helper /usr/share/applications/mcontrolcenter.desktop /etc/xdg/autostart/mcontrolcenter.desktop /etc/udev/rules.d/70-mcontrolcenter-rgb.rules \
         /usr/share/icons/hicolor/scalable/apps/mcontrolcenter.svg /usr/share/dbus-1/system.d/mcontrolcenter-helper.conf /usr/share/dbus-1/system-services/mcontrolcenter.helper.service \
         /etc/systemd/system/mcontrolcenter-doctor.service /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy
     $SUDO rm -rvf /usr/libexec/mcontrolcenter
@@ -50,6 +50,8 @@ $SUDO install -Dm755 scripts/mcontrolcenter-gpu /usr/libexec/mcontrolcenter/mcon
 $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.gpu.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy
 $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy
 $SUDO install -Dm644 packaging/mcontrolcenter-doctor.service /etc/systemd/system/mcontrolcenter-doctor.service
+$SUDO install -Dm644 packaging/70-mcontrolcenter-rgb.rules /etc/udev/rules.d/70-mcontrolcenter-rgb.rules
+$SUDO udevadm control --reload-rules 2>/dev/null || true; $SUDO udevadm trigger --subsystem-match=hidraw 2>/dev/null || true
 $SUDO install -Dm644 packaging/mcontrolcenter-autostart.desktop /etc/xdg/autostart/mcontrolcenter.desktop
 $SUDO systemctl daemon-reload
 $SUDO systemctl reload dbus 2>/dev/null || true

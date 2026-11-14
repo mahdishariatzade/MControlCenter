@@ -29,6 +29,7 @@
 #include "bridge.h"
 #include "sensors.h"
 #include "pages.h"
+#include "rgb.h"
 #include <QThread>
 
 QT_BEGIN_NAMESPACE
@@ -54,6 +55,9 @@ private:
     Caps lastCaps; QString lastModel, lastGpuState = "none", lastGpuMode = "on"; bool lastGpuSupported = false;
     QTimer gameTimer; bool gameActive = false; int gameSavedMode = -1; bool gameSavedBoost = false; qint64 hotSince = 0; qint64 lastAlertMs = 0;
     void settingChanged(SettingsPage::Item what, int value); void gameModeTick(); void thermalWatch(const Snapshot &s); void syncSettingsPage();
+    LightingPage *lightingPage = nullptr; RgbWorker *rgb = nullptr; QThread rgbThread; QTimer rgbDebounce;
+    RgbProfile rgbUser; bool rgbChosen = false, rgbFollowMode = false, rgbFlashThermal = false, rgbPulseLow = false, rgbOffOnLock = false, rgbLocked = false, rgbLowBat = false, rgbPresent = false; int rgbLastMode = -2;
+    RgbProfile rgbEffective() const; void rgbPush(); void rgbSave(); void rgbLoad(); void onScreenLocked(bool locked);
     void buildPages();
     void syncPages(const Snapshot &s);
     void syncFanEditor(); void writeFanToUi(int fan, const QVector<int> &speeds, const QVector<int> &temps);
@@ -149,6 +153,7 @@ private:
     QAction *quitAction = nullptr;
 
 private slots:
+    void onScreenLockedSlot(bool locked) { onScreenLocked(locked); }
     void on_ChargerStateChange(bool isCharging);
     void on_PowerProfileChange(const PowerProfile profile);
 
