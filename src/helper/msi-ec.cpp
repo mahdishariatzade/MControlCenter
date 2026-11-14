@@ -17,6 +17,7 @@
  */
 
 #include "msi-ec.h"
+#include <QDir>
 #include <QFile>
 
 // Available entries: https://github.com/BeardOverflow/msi-ec?tab=readme-ov-file#usage
@@ -38,11 +39,16 @@ const QString msi_ec_cpu_realtime_fan_speed = msi_ec_path + "/cpu/realtime_fan_s
 const QString msi_ec_cpu_basic_fan_speed = msi_ec_path + "/cpu/basic_fan_speed";
 const QString msi_ec_gpu_realtime_temperature = msi_ec_path + "/gpu/realtime_temperature";
 const QString msi_ec_gpu_realtime_fan_speed = msi_ec_path + "/gpu/realtime_fan_speed";
-const QString msi_ec_bat1 = "/sys/class/power_supply/BAT1";
-const QString msi_ec_bat1_start_threshold = msi_ec_bat1 + "/charge_control_start_threshold";
-const QString msi_ec_bat1_end_threshold = msi_ec_bat1 + "/charge_control_end_threshold";
-const QString msi_ec_bat1_capacity = msi_ec_bat1 + "/capacity";
-const QString msi_ec_bat1_status = msi_ec_bat1 + "/status";
+// The battery is BAT0 on some MSI laptops and BAT1 on others: use whichever one carries the msi-ec charge-limit files (BAT1 as the last resort).
+static QString batFile(const char *name) {
+    const QDir d("/sys/class/power_supply");
+    for (const QString &n : d.entryList({"BAT*"}, QDir::Dirs | QDir::NoDotAndDotDot)) { const QString f = d.filePath(n + "/" + name); if (QFile::exists(f)) return f; }
+    return QString("/sys/class/power_supply/BAT1/") + name;
+}
+#define msi_ec_bat1_start_threshold batFile("charge_control_start_threshold")
+#define msi_ec_bat1_end_threshold batFile("charge_control_end_threshold")
+#define msi_ec_bat1_capacity batFile("capacity")
+#define msi_ec_bat1_status batFile("status")
 // /sys/class/leds/platform::<led_name>/brightness
 const QString msi_ec_kbd_backlight_brightness = "/sys/class/leds/msiacpi::kbd_backlight/brightness";
 

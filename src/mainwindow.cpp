@@ -1504,6 +1504,18 @@ void MainWindow::exerciseAction(int what, int value) {
             // preferred: the root helper does the whole thing hands-free with the charger connected (one password prompt)
             const QString helper = "/usr/libexec/mcontrolcenter/mcontrolcenter-battery";
             if (!QFile::exists(helper)) { startManual(); break; }
+            {   // The adapter-simulation register was verified on one board only. Anywhere else: say so, and let the user choose the guided manual version instead.
+                static const QStringList verifiedBoards = {"MS-15P4"};
+                Settings st; const bool consent = st.isValueExist("Cal/autoConsent") && st.getValue("Cal/autoConsent").toBool();
+                if (!verifiedBoards.contains(lastCaps.board) && !consent) {
+                    QMessageBox box(this); box.setIcon(QMessageBox::Warning); box.setWindowTitle(tr("Automatic calibration"));
+                    box.setText(tr("Automatic calibration is untested on your laptop (%1).").arg(lastCaps.board.isEmpty() ? tr("unknown model") : lastCaps.board));
+                    box.setInformativeText(tr("It uses an MSI firmware feature (the same one MSI's own tool uses) that has only been verified on the MSI Crosshair 16 HX AI. It is built to restore the charger state and your charge limit on any failure, but it does write to the embedded controller.\n\nThe guided manual version needs no such write: it only tells you when to unplug and re-plug."));
+                    QPushButton *a = box.addButton(tr("Use automatic anyway"), QMessageBox::AcceptRole); QPushButton *m = box.addButton(tr("Use the guided manual version"), QMessageBox::RejectRole); box.setDefaultButton(m); box.exec();
+                    if (box.clickedButton() != a) { startManual(); break; }
+                    Settings::setValue("Cal/autoConsent", true);
+                }
+            }
             exProc = new QProcess(this); exProcAt = now;
             connect(exProc, &QProcess::finished, this, [this, startManual](int code, QProcess::ExitStatus) {
                 const QString out = QString::fromUtf8(exProc->readAllStandardOutput()); exProc->deleteLater(); exProc = nullptr;

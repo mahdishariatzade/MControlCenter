@@ -11,14 +11,15 @@ class PanelRefresh : public QObject {
     Q_OBJECT
 public:
     explicit PanelRefresh(QObject *p = nullptr) : QObject(p) {}
-    QString output, res; QList<int> hz; int current = -1; bool ok = false, available = false;
+    QString output, res, backend; QList<int> hz; int current = -1; bool ok = false, available = false;   // backend: "kscreen" (KDE, X11+Wayland), "xrandr" (any X11 desktop) or ""
     void refresh();                         // re-read the modes
     void setHzIndex(int i);                 // pick one of `hz`
     void applyForPower(bool onCharger);     // highest rate on the charger, 60 Hz on battery
 signals:
     void changed();
 private:
-    struct Mode { int id, w, h; double hz; };
+    struct Mode { int id, w, h; double hz; QString hzText; };
+    void detectBackend(); void parse(const QString &txt);
     QList<Mode> modes; int pendingPower = -1;
     void setMode(int id);
 };

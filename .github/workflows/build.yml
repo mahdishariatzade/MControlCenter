@@ -1,0 +1,33 @@
+name: build
+on: [push, pull_request]
+jobs:
+  build:
+    name: build on ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu:24.04, debian:trixie, fedora:latest, archlinux:latest, opensuse/tumbleweed]
+    steps:
+      - name: Install dependencies
+        run: |
+          . /etc/os-release
+          case "$ID" in
+            ubuntu|debian) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential git qt6-base-dev qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools shellcheck libgl1-mesa-dev ;;
+            fedora) dnf install -y cmake gcc-c++ make git qt6-qtbase-devel qt6-qttools-devel ShellCheck mesa-libGL-devel ;;
+            arch) pacman -Syu --noconfirm cmake gcc make git qt6-base qt6-tools shellcheck ;;
+            opensuse*) zypper -n install cmake gcc-c++ make git qt6-base-devel qt6-tools-devel qt6-linguist-devel ShellCheck ;;
+          esac
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel
+      - name: Shell scripts
+        run: |
+          for f in install.sh scripts/mcontrolcenter-doctor scripts/mcontrolcenter-gpu scripts/mcontrolcenter-battery scripts/install-plasma-applet.sh; do bash -n "$f"; done
+          shellcheck -S error install.sh scripts/mcontrolcenter-doctor scripts/mcontrolcenter-gpu scripts/mcontrolcenter-battery scripts/install-plasma-applet.sh
+      - name: Status commands run without root
+        run: |
+          ./scripts/mcontrolcenter-doctor status || true
+          ./scripts/mcontrolcenter-gpu status || true
+          ./scripts/mcontrolcenter-battery status || true

@@ -61,7 +61,7 @@ ensure_driver() {   # load msi-wmi-platform (in-tree or DKMS copy); never with f
 }
 unload_driver() { [ "$LOADED_BY_US" = 1 ] && rmmod msi_wmi_platform 2>/dev/null; LOADED_BY_US=0; }
 getb() {   # getb <reg> -> two hex digits (value); returns 1 if the firmware did not answer with flag 01
-    local d f tmp r; d="$(wmi_dir)"; [ -n "$d" ] || return 1; tmp="$(mktemp "$RUN/.wi.XXXXXX" 2>/dev/null || mktemp)"
+    local d tmp r; d="$(wmi_dir)"; [ -n "$d" ] || return 1; tmp="$(mktemp "$RUN/.wi.XXXXXX" 2>/dev/null || mktemp)"
     { printf "\\x$(printf %02x "$1")"; head -c 31 /dev/zero; } > "$tmp"; cat "$tmp" > "$d/get_data" 2>/dev/null; rm -f "$tmp"
     r="$(head -c 2 "$d/get_data" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
     [ "${r:0:2}" = 01 ] && [ ${#r} = 4 ] && { echo "${r:2:2}"; return 0; }; return 1
@@ -93,7 +93,7 @@ lim_set() {   # lim_set <start> <end>   order matters on hysteresis drivers, so 
 
 # ── restore (always safe) ──
 do_restore() {
-    local ok=1 s e line
+    local ok=1 s e
     if [ -n "$(wmi_dir)" ] || ensure_driver; then
         sim_bit 0 || { ok=0; log "WARNING: could not clear the adapter simulation bit"; }
     else
@@ -179,7 +179,7 @@ cmd_run() {
     local ls le; read -r ls le < <(lim_get)
     printf 'time=%s\nbf=%s\nlimits=%s %s\n' "$(date +%s)" "$bf" "$ls" "$le" > "$SAVE"; sync "$SAVE" 2>/dev/null     # written BEFORE anything is changed
     local full0; full0="$(charge_full)"
-    local t0=$SECONDS now ref last_prog
+    local t0=$SECONDS ref last_prog
 
     # ── stage 1: charge to full (MSI: "Best for Mobility" first) ──
     st state=charging "msg=Charging to 100 %. Keep the charger connected." stage=1 floor="$floor"
@@ -203,7 +203,7 @@ cmd_run() {
     # ── stage 2: simulate unplug, discharge to the floor ──
     st state=discharging "msg=Discharging to $floor % with the charger still connected." stage=2
     sim_bit 1 || { REASON="The firmware did not accept the adapter simulation"; exit 9; }
-    local i; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do [ "$(ac_online)" = 0 ] && break; sleep 1; done
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do [ "$(ac_online)" = 0 ] && break; sleep 1; done
     [ "$(ac_online)" = 0 ] || { REASON="The firmware accepted the command but still reports the charger as connected"; exit 9; }
     ref="$(charge_now)"; last_prog=$SECONDS; local t1=$SECONDS reasserts=0 lastcheck=$SECONDS
     while :; do
@@ -225,9 +225,9 @@ cmd_run() {
     # ── stage 3: hand everything back ──
     local endpct; endpct="$(cap)"
     st state=restoring "msg=Reconnecting the charger and restoring your charge limit." stage=3
-    FINAL=done
-    do_restore || { FINAL=done; }
-    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do [ "$(ac_online)" = 1 ] && break; sleep 1; done
+    FINAL="done"
+    do_restore || true
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do [ "$(ac_online)" = 1 ] && break; sleep 1; done
     st state=done "msg=Calibration complete. The battery went from 100 % down to $endpct % and is charging again." "end=$(date +%s)" "endpct=$endpct" "full_before=$full0" "full_after=$(charge_full)"
     exit 0
 }

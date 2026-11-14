@@ -12,38 +12,60 @@
 using namespace kit;
 
 // ───────────────────────────── laptop panel (kscreen-doctor) ─────────────────────────────
-void PanelRefresh::refresh() {
-    available = !QStandardPaths::findExecutable("kscreen-doctor").isEmpty();
-    if (!available) { ok = false; emit changed(); return; }
-    auto *pr = new QProcess(this);
-    connect(pr, &QProcess::finished, this, [this, pr] {
-        const QString txt = QString::fromUtf8(pr->readAllStandardOutput()).remove(QRegularExpression("\x1b\\[[0-9;]*m")); pr->deleteLater();
-        modes.clear(); output.clear(); ok = false; bool internal = false;
-        static const QRegularExpression tok("(\\d+):(\\d+)x(\\d+)@([\\d.]+)([!*]*)");
-        int curW = 0, curH = 0; double curHz = 0;
+void PanelRefresh::detectBackend() {
+    const bool kde = qEnvironmentVariable("XDG_CURRENT_DESKTOP").contains("KDE", Qt::CaseInsensitive), x11 = qEnvironmentVariable("XDG_SESSION_TYPE") == "x11" || (qEnvironmentVariable("WAYLAND_DISPLAY").isEmpty() && !qEnvironmentVariable("DISPLAY").isEmpty());
+    const bool ks = !QStandardPaths::findExecutable("kscreen-doctor").isEmpty(), xr = !QStandardPaths::findExecutable("xrandr").isEmpty();
+    backend = (ks && (kde || !(xr && x11))) ? "kscreen" : (xr && x11) ? "xrandr" : QString();
+    available = !backend.isEmpty();
+}
+void PanelRefresh::parse(const QString &txt) {
+    modes.clear(); output.clear(); ok = false; int curW = 0, curH = 0; double curHz = 0;
+    if (backend == "kscreen") {
+        bool internal = false; static const QRegularExpression tok("(\\d+):(\\d+)x(\\d+)@([\\d.]+)([!*]*)");
         for (const QString &ln : txt.split('\n')) {
             const QString t = ln.trimmed();
             if (t.startsWith("Output:")) { const QStringList p = t.split(' '); internal = output.isEmpty() && p.size() > 2 && QRegularExpression("^(eDP|LVDS|DSI)").match(p[2]).hasMatch(); if (internal) output = p[2]; continue; }
             if (internal && t.startsWith("Modes:")) {
                 auto it = tok.globalMatch(t);
-                while (it.hasNext()) { const auto m = it.next(); Mode md{m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt(), m.captured(4).toDouble()}; modes.append(md);
+                while (it.hasNext()) { const auto m = it.next(); Mode md{m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt(), m.captured(4).toDouble(), m.captured(4)}; modes.append(md);
                     if (m.captured(5).contains('*')) { curW = md.w; curH = md.h; curHz = md.hz; } }
                 internal = false;
             }
         }
-        hz.clear(); current = -1;
-        if (curW) { res = QString("%1 × %2").arg(curW).arg(curH);
-            for (const Mode &m : modes) if (m.w == curW && m.h == curH) { const int r = int(std::lround(m.hz)); if (!hz.contains(r)) hz.append(r); }
-            std::sort(hz.begin(), hz.end()); current = hz.indexOf(int(std::lround(curHz))); ok = hz.size() > 0; }
+    } else {   // xrandr --query:  "eDP-1 connected primary 2560x1600+0+0 ..."  then "   2560x1600    240.00*+  60.00"
+        static const QRegularExpression head("^(\\S+) connected"), line("^\\s+(\\d+)x(\\d+)\\s+(.*)$"), rate("([\\d.]+)([*+ ]*)");
+        bool internal = false;
+        for (const QString &ln : txt.split('\n')) {
+            const auto h = head.match(ln);
+            if (h.hasMatch()) { internal = output.isEmpty() && QRegularExpression("^(eDP|LVDS|DSI)").match(h.captured(1)).hasMatch(); if (internal) output = h.captured(1); continue; }
+            if (!internal) continue;
+            const auto l = line.match(ln); if (!l.hasMatch()) { if (!ln.startsWith(' ')) internal = false; continue; }
+            auto it = rate.globalMatch(l.captured(3));
+            while (it.hasNext()) { const auto m = it.next(); Mode md{int(modes.size()), l.captured(1).toInt(), l.captured(2).toInt(), m.captured(1).toDouble(), m.captured(1)}; modes.append(md);
+                if (m.captured(2).contains('*')) { curW = md.w; curH = md.h; curHz = md.hz; } }
+        }
+    }
+    hz.clear(); current = -1;
+    if (curW) { res = QString("%1 × %2").arg(curW).arg(curH);
+        for (const Mode &m : modes) if (m.w == curW && m.h == curH) { const int r = int(std::lround(m.hz)); if (!hz.contains(r)) hz.append(r); }
+        std::sort(hz.begin(), hz.end()); current = hz.indexOf(int(std::lround(curHz))); ok = hz.size() > 0; }
+}
+void PanelRefresh::refresh() {
+    detectBackend();
+    if (!available) { ok = false; emit changed(); return; }
+    auto *pr = new QProcess(this);
+    connect(pr, &QProcess::finished, this, [this, pr] {
+        parse(QString::fromUtf8(pr->readAllStandardOutput()).remove(QRegularExpression("\x1b\\[[0-9;]*m"))); pr->deleteLater();
         if (pendingPower >= 0) { const bool ac = pendingPower == 1; pendingPower = -1; emit changed(); applyForPower(ac); return; }
         emit changed();
     });
-    pr->start("kscreen-doctor", {"-o"});
+    if (backend == "kscreen") pr->start("kscreen-doctor", {"-o"}); else pr->start("xrandr", {"--query"});
 }
 void PanelRefresh::setMode(int id) {
     auto *pr = new QProcess(this);
     connect(pr, &QProcess::finished, this, [this, pr] { pr->deleteLater(); QTimer::singleShot(700, this, [this] { refresh(); }); });
-    pr->start("kscreen-doctor", {QString("output.%1.mode.%2").arg(output).arg(id)});
+    if (backend == "kscreen") pr->start("kscreen-doctor", {QString("output.%1.mode.%2").arg(output).arg(id)});
+    else { const Mode &m = modes.value(id); pr->start("xrandr", {"--output", output, "--mode", QString("%1x%2").arg(m.w).arg(m.h), "--rate", m.hzText}); }
 }
 void PanelRefresh::setHzIndex(int i) {
     if (!ok || i < 0 || i >= hz.size()) return;
@@ -82,7 +104,7 @@ DisplaysPage::DisplaysPage(QWidget *p) : AnimPage(p) {
     { Row r; r.type = Row::Info; r.label = "Panel"; laptop->rows.push_back(r); }
     { Row r; r.type = Row::Segment; r.label = "Refresh rate"; r.sub = "Higher is smoother, lower saves battery (60 Hz is about 3 W less than 240 Hz)"; r.pick = [this](int i) { if (onHz) onHz(i); }; laptop->rows.push_back(r); }
     { Row r; r.type = Row::Switch; r.label = "Follow the power source"; r.sub = "Highest rate on the charger, 60 Hz on battery"; r.click = [this] { if (onAuto) onAuto(!laptop->rows[2].on); }; laptop->rows.push_back(r); }
-    { Row r; r.type = Row::Text; r.label = "Uses KDE's kscreen-doctor, so it works on Plasma (Wayland and X11). Changing the rate by hand sticks until the power source changes."; laptop->rows.push_back(r); }
+    { Row r; r.type = Row::Text; r.label = "Works on KDE Plasma (X11 and Wayland, via kscreen-doctor) and on any X11 desktop (via xrandr). GNOME on Wayland and other Wayland desktops cannot be controlled yet. Changing the rate by hand sticks until the power source changes."; laptop->rows.push_back(r); }
     laptop->relayout();
     ext = new QVBoxLayout; ext->setSpacing(10); col->addLayout(ext);
     none = new RowsPanel("", "EXTERNAL MONITORS", content); col->addWidget(none); adopt(none, 0.1); col->addStretch(1);
@@ -106,7 +128,7 @@ void DisplaysPage::check() {
 }
 
 void DisplaysPage::setLaptop(const QString &res, const QList<int> &hz, int sel, bool autoOn, bool available) {
-    auto &R = laptop->rows; R[0].value = available ? (res.isEmpty() ? QString("built-in") : res) : "kscreen-doctor not found";
+    auto &R = laptop->rows; R[0].value = available ? (res.isEmpty() ? QString("built-in") : res) : "not supported on this desktop (needs KDE or an X11 session)";
     R[1].opts.clear(); for (int h : hz) R[1].opts.push_back(QString("%1 Hz").arg(h)); R[1].sel = sel; R[1].visible = !hz.isEmpty(); R[1].enabled = available;
     R[2].on = autoOn; R[2].enabled = available && hz.size() > 1; laptop->relayout(); laptop->update(); kick();
 }

@@ -29,8 +29,24 @@ persists it. The app shows a one-click "Fix it now" banner instead of an error d
 - **Discrete GPU boot mode** (NVIDIA hybrid laptops): keeps the dGPU driverless so it sleeps in D3cold (best battery, quietest fans), applied at next boot and reversible; shown only where it is safe. Not a hardware MUX (that is a BIOS setting).
 - **Session D-Bus API** `io.github.dmitry_s93.MControlCenter` at `/Control`: `State` (JSON), `SetMode turbo|balanced|silent|eco`, `SetCoolerBoost`, `SetChargeLimit`, `ShowWindow`.
 - **KDE integration** - two-way sync with the power-profiles-daemon slider, plus `plasma/local.battery-msi`: the Power & Battery popup with the MSI controls built in.
+- **Displays tab**: the laptop panel's refresh rate with **"Follow the power source"** (highest rate on the charger, 60 Hz on battery, about 3 W less), via `kscreen-doctor` on KDE (X11 and Wayland) or `xrandr` on any X11 desktop. External monitors are controlled over the video cable with **DDC/CI**: brightness and contrast always, and input, picture mode, colour temperature, RGB gain, sharpness and volume when the monitor reports them. Needs DDC/CI switched on in the monitor's own menu. MSI-specific extras (Night Vision, crosshair...) are not implemented yet: use *Copy monitor report* and open an issue with your model.
+- **Automatic battery calibration with the charger connected**: reproduces what MSI's own tool does (charge to 100 %, simulate an unplug through the firmware's adapter-simulation register, discharge to 20 %, restore) as a root service with safeguards: originals saved first, restored on every exit and at the next boot, 20-minute no-progress watchdog, battery floor. **Verified on the MSI Crosshair 16 HX AI (MS-15P4) only**: on any other board the app asks before using it and offers the guided manual version (no EC write). Needs the `msi-wmi-platform` driver (the kernel's own, or a DKMS copy the installer registers on kernels 6.5+).
+- **Vendor badges and panel icons** drawn as original neon marks in the app's accent colour (not the companies' official logos; all names are trademarks of their owners).
 - Developed on an MSI Crosshair 16 HX AI (MS-15P4, EC 15P4EMS1.105), msi-ec 0.13, Kali + Plasma 6.7. **Other MSI models should work but are untested - please open an issue with your model and what the Dashboard shows.**
 - Bundled fonts: Rajdhani and IBM Plex Mono (SIL OFL, see `resources/fonts`).
+
+### Compatibility at a glance
+
+| | Status |
+|---|---|
+| Debian / Ubuntu / Kali | installer tested (Kali, Plasma 6) |
+| Fedora, Arch, openSUSE | installer paths written, built in CI, **not run on real hardware** |
+| Desktop | KDE Plasma 6 first-class; GNOME, XFCE, others run the Qt tray app and the session D-Bus API (`./scripts/install-plasma-applet.sh` is KDE-only and optional) |
+| Laptops | any MSI model msi-ec supports; the UI hides what your firmware does not report. **Automatic calibration, keyboard lighting layouts and the key map are verified on one model**; others are untested, please report |
+| Display refresh rate | KDE (kscreen-doctor) or any X11 desktop (xrandr); GNOME-on-Wayland and other Wayland desktops: not supported yet |
+| Monitors | any DDC/CI monitor; MSI monitors' vendor-specific features not added yet |
+
+Optional KDE panel applet (no root): `./scripts/install-plasma-applet.sh`
 
 Dev screenshots: `MCC_SHOT=/tmp/x QT_QPA_PLATFORM=xcb xvfb-run -a ./mcontrolcenter` (note: it applies the saved mode to the EC).
 

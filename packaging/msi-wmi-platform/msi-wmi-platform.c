@@ -25,7 +25,12 @@
 #include <linux/types.h>
 #include <linux/wmi.h>
 
+#include <linux/version.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
+#include <asm/unaligned.h>      /* moved to <linux/unaligned.h> in 6.12 */
+#else
 #include <linux/unaligned.h>
+#endif
 
 #define DRIVER_NAME	"msi-wmi-platform"
 
