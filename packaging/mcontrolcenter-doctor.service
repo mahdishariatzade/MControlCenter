@@ -1,0 +1,16 @@
+[Unit]
+Description=MControlCenter: keep the msi-ec driver built and loaded for the running kernel
+Documentation=https://github.com/p34t1k/MControlCenter
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/sys/class/dmi/id/sys_vendor
+ConditionVirtualization=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/mcontrolcenter/mcontrolcenter-doctor boot
+TimeoutStartSec=15min
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

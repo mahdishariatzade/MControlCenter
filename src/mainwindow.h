@@ -47,6 +47,9 @@ private:
     ControlBridge *bridge = nullptr;
     DashData dashData;
     void pushDashboard();
+    void probeCaps();
+    void checkDriver();
+    void runDoctorFix();
     void setModeIndex(int mode);
     void setChargeLimit(int percent);
     QString stateJson() const;

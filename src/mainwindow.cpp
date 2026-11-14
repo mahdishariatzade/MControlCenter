@@ -25,6 +25,8 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QFile>
+#include <QProcess>
+#include <QRegularExpression>
 #include <QDBusConnection>
 #include "theme.h"
 
@@ -162,6 +164,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->tabWidget->insertTab(0, dashboard, tr("Dashboard"));
     ui->tabWidget->tabBar()->setFocusPolicy(Qt::NoFocus);
     ui->tabWidget->setTabText(1, tr("Controls"));
+    for (int i = 0; i < ui->tabWidget->count(); ++i) ui->tabWidget->setTabIcon(i, QIcon());
     ui->tabWidget->setCurrentIndex(0);
     connect(dashboard, &DashboardPage::modeRequested, this, &MainWindow::setModeIndex);
     connect(dashboard, &DashboardPage::coolerBoostRequested, this, [this](bool on) { setCoolerBoostState(on); });
@@ -179,10 +182,8 @@ MainWindow::MainWindow(QWidget *parent)
     ui->tabWidget->setTabVisible(6, false);
     setTabsEnabled(false);
 
-    if (!operate.isMsiEcLoaded()) {
-        QMessageBox::critical(nullptr, this->windowTitle(), tr("The msi-ec module is not loaded/installed.\n"
-                                                               "Check the <About> page for more info."));
-    }
+    connect(dashboard, &DashboardPage::fixRequested, this, &MainWindow::runDoctorFix);
+    checkDriver();
 
     if (!operate.isEcSysModuleLoaded() && !operate.loadEcSysModule())
         QMessageBox::critical(nullptr, this->windowTitle(), tr("The ec_sys module couldn't be detected, it might be required to control the fans."));
@@ -261,6 +262,7 @@ void MainWindow::updateData() {
             operate.doProbe();
             setTabsEnabled(true);
             loadConfigs();
+            probeCaps();
             isActive = true;
         }
         updateBatteryCharge();
@@ -1117,4 +1119,60 @@ QString MainWindow::stateJson() const {
     o["cpuFanPct"] = d.cpuFanPct; o["gpuFanPct"] = d.gpuFanPct; o["cpuFanRpm"] = d.cpuFanRpm; o["gpuFanRpm"] = d.gpuFanRpm;
     o["coolerBoost"] = d.coolerBoost; o["chargeLimit"] = d.chargeLimit;
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+static QString slurp(const QString &path) { QFile f(path); return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).trimmed() : QString(); }
+
+// What can THIS laptop do? Probed once; the dashboard hides everything the hardware does not have.
+void MainWindow::probeCaps() {
+    Caps c;
+    c.model = slurp("/sys/class/dmi/id/product_name"); c.board = slurp("/sys/class/dmi/id/board_name");
+    c.fw = slurp("/sys/devices/platform/msi-ec/fw_version"); if (c.fw.isEmpty()) c.fw = QString::fromStdString(operate.getEcVersion());
+    QString cpu; for (const QString &l : slurp("/proc/cpuinfo").split('\n')) if (l.startsWith("model name")) { cpu = l.section(':', 1).trimmed(); break; }
+    cpu.remove(QRegularExpression("\\((R|TM|tm|r)\\)")).remove(QRegularExpression("\\s+(CPU|Processor)\\b.*$")).remove(QRegularExpression("\\s*@.*$")); c.cpuName = cpu.simplified();
+    std::optional<int> g = operate.getGpuTemp(); c.gpuTemp = g.has_value();
+    std::optional<int> f2 = operate.getFan2Speed(); c.fan2 = f2.has_value();
+    c.chargeLimit = operate.isBatteryThresholdSupport();
+    if (operate.isMsiEcLoaded()) {                                       // msi-ec publishes exactly which modes this EC knows
+        c.coolerBoost = QFile::exists("/sys/devices/platform/msi-ec/cooler_boost");
+        QString sm = slurp("/sys/devices/platform/msi-ec/available_shift_modes"), fm = slurp("/sys/devices/platform/msi-ec/available_fan_modes");
+        if (!sm.isEmpty()) { c.modeOk[0] = sm.contains("turbo"); c.modeOk[1] = sm.contains("comfort"); c.modeOk[3] = sm.contains("eco"); c.modeOk[2] = sm.contains("comfort") && (fm.isEmpty() || fm.contains("silent")); }
+    }
+    if (c.gpuTemp) {                                                      // GPU marketing name from lspci (discrete GPUs only)
+        QProcess lp; lp.start("lspci", {"-mm"}); lp.waitForFinished(2000);
+        for (const QString &l : QString::fromUtf8(lp.readAllStandardOutput()).split('\n'))
+            if ((l.contains("VGA compatible") || l.contains("3D controller")) && !l.contains("Intel")) {
+                QRegularExpression re("\"([^\"]*)\"\\s*\"([^\"]*)\"\\s*\"([^\"]*)\"\\s*\"([^\"]*)\""); auto m = re.match(l);
+                if (m.hasMatch()) { QString dev = m.captured(4); int a = dev.indexOf('['), b = dev.indexOf(']'); c.gpuName = (a >= 0 && b > a ? dev.mid(a + 1, b - a - 1) : dev).replace("GeForce ", "").replace("Laptop GPU", "").simplified(); break; }
+            }
+    }
+    dashboard->setCaps(c);
+}
+
+// Friendly replacement for the old "msi-ec not loaded" dialog: say what is wrong and offer the one-click fix.
+void MainWindow::checkDriver() {
+    if (operate.isMsiEcLoaded()) { dashboard->setProblem(QString(), QString()); return; }
+    const QString doctor = "/usr/libexec/mcontrolcenter/mcontrolcenter-doctor";
+    QString state, fw;
+    if (QFile::exists(doctor)) {
+        QProcess pr; pr.start(doctor, {"status"}); pr.waitForFinished(5000);
+        for (const QString &l : QString::fromUtf8(pr.readAllStandardOutput()).split('\n')) { if (l.startsWith("state=")) state = l.mid(6); else if (l.startsWith("fw=")) fw = l.mid(3); }
+    }
+    if (state == "not-msi") dashboard->setProblem(tr("This does not look like an MSI laptop. Running in read-only fallback mode."), QString());
+    else if (state == "unsupported-firmware") dashboard->setProblem(tr("The msi-ec driver does not know this EC firmware (%1) yet. Basic monitoring works; please report the firmware to the msi-ec project.").arg(fw), QString());
+    else if (state == "secureboot") dashboard->setProblem(tr("Secure Boot rejected the msi-ec module. Enroll the DKMS signing key (mokutil --import /var/lib/dkms/mok.pub) and reboot."), QString());
+    else if (!state.isEmpty()) dashboard->setProblem(tr("The msi-ec driver is not built for this kernel (%1). This usually happens right after a kernel update.").arg(state), tr("Fix it now"));
+    else dashboard->setProblem(tr("The msi-ec driver is not loaded. Reinstall MControlCenter with install.sh to set up the driver and automatic repair after kernel updates."), QString());
+}
+
+void MainWindow::runDoctorFix() {
+    dashboard->setProblem(tr("Repairing the driver: installing kernel headers and rebuilding msi-ec. This can take a minute..."), QString());
+    auto *pr = new QProcess(this);
+    connect(pr, &QProcess::finished, this, [this, pr](int code, QProcess::ExitStatus) {
+        QString err = QString::fromUtf8(pr->readAllStandardError()).trimmed().split('\n').last();
+        pr->deleteLater();
+        if (code == 0) { QProcess::startDetached("/bin/sh", {"-c", "sleep 1; exec mcontrolcenter"}); quitApp(); }
+        else dashboard->setProblem(tr("Repair did not finish: %1").arg(err.isEmpty() ? tr("authentication cancelled or failed") : err), tr("Try again"));
+    });
+    pr->start("pkexec", {"/usr/libexec/mcontrolcenter/mcontrolcenter-doctor", "fix"});
 }

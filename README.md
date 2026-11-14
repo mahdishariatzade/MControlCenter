@@ -1,13 +1,25 @@
 
-## This fork: Crosshair 16 HX AI dashboard (2026-11)
+## This fork: MSI telemetry dashboard + self-healing driver (2026-11)
 
 ![dashboard](docs/screenshots/dashboard.png)
 
-- **Dashboard tab** - animated CPU/GPU temperature gauges, spinning fan dials, battery ring with charge-limit marker, 3-minute history graph, live stats (load, clock, RAM, NVMe, battery draw/health), power-mode tiles, Cooler Boost, charge-limit chips and one-touch presets (Gaming / Work / Night / Travel).
-- **Neon dark theme** for the whole app; the window is resizable (upstream caps it at 580x480).
+**Install (Debian/Ubuntu/Kali tested; Fedora, Arch, openSUSE paths written, untested):**
+
+```bash
+git clone https://github.com/p34t1k/MControlCenter && cd MControlCenter && ./install.sh
+```
+
+The installer builds the app, installs it with its root helper and tray autostart, and sets up the **msi-ec kernel driver** through DKMS.
+It also installs `mcontrolcenter-doctor` and a boot-time service that **repairs the driver after kernel updates**: if the new kernel has no headers or
+no msi-ec build, it installs the headers (and the header *meta* package so future kernels bring theirs), rebuilds via DKMS, loads the module and
+persists it. The app shows a one-click "Fix it now" banner instead of an error dialog if anything is still wrong. `./install.sh --uninstall` removes it.
+
+- **Adapts to your MSI laptop** - what the Dashboard shows comes from the capabilities msi-ec reports (shift modes, fan modes, cooler boost, GPU sensor, second fan, charge limit). Missing features simply disappear.
+- **Dashboard** - telemetry panels with LED-style segmented meters and peak-hold marks, rotating fan glyphs with inertia, battery meter with charge-limit notch, 3-minute interactive graph (hover for a read-out), mode strip, one-touch presets (Gaming / Work / Night / Travel). One accent colour follows the active mode; Cooler Boost shows a hazard strip.
 - **Session D-Bus API** `io.github.dmitry_s93.MControlCenter` at `/Control`: `State` (JSON), `SetMode turbo|balanced|silent|eco`, `SetCoolerBoost`, `SetChargeLimit`, `ShowWindow`.
-- **KDE integration**: two-way sync with the power-profiles-daemon slider, plus `plasma/local.battery-msi`, a Power & Battery popup with the MSI controls built in.
-- Developed and tested on an MSI Crosshair 16 HX AI (MS-15P4, EC 15P4EMS1.105) with msi-ec 0.13 on Kali Linux, Plasma 6.7. Other msi-ec laptops should degrade gracefully but are untested.
+- **KDE integration** - two-way sync with the power-profiles-daemon slider, plus `plasma/local.battery-msi`: the Power & Battery popup with the MSI controls built in.
+- Developed on an MSI Crosshair 16 HX AI (MS-15P4, EC 15P4EMS1.105), msi-ec 0.13, Kali + Plasma 6.7. **Other MSI models should work but are untested - please open an issue with your model and what the Dashboard shows.**
+- Bundled fonts: Rajdhani and IBM Plex Mono (SIL OFL, see `resources/fonts`).
 
 Dev screenshots: `MCC_SHOT=/tmp/x QT_QPA_PLATFORM=xcb xvfb-run -a ./mcontrolcenter` (note: it applies the saved mode to the EC).
 

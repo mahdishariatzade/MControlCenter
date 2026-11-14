@@ -1,0 +1,132 @@
+#!/bin/bash
+# mcontrolcenter-doctor - keeps the msi-ec kernel driver working on MSI laptops, across kernel updates and distros.
+#
+#   mcontrolcenter-doctor status [--json]   what is wrong (no root needed)
+#   mcontrolcenter-doctor fix    [--quiet]   install headers/DKMS/source as needed, build msi-ec for the RUNNING kernel, load it (root)
+#   mcontrolcenter-doctor boot               same as `fix --quiet`, but does nothing unless something is actually broken (used by the systemd unit)
+#
+# Why it exists: msi-ec is an out-of-tree driver built by DKMS. After a kernel update DKMS can only rebuild it if the matching
+# kernel headers are installed. This script makes sure they are (and that future kernels bring theirs), builds the module,
+# loads it, and persists the load across boots. It never touches anything on a non-MSI machine.
+set -u
+MSIEC_GIT="${MSIEC_GIT:-https://github.com/BeardOverflow/msi-ec.git}"
+KVER="$(uname -r)"
+QUIET=0; JSON=0; CMD="${1:-status}"; shift || true
+for a in "$@"; do case "$a" in --quiet) QUIET=1 ;; --json) JSON=1 ;; esac; done
+log() { [ "$QUIET" = 1 ] || echo "[doctor] $*" >&2; logger -t mcontrolcenter-doctor -- "$*" 2>/dev/null || true; }
+
+vendor_ok() { grep -qiE 'micro-star|msi' /sys/class/dmi/id/sys_vendor 2>/dev/null; }
+fw_string() { cat /sys/devices/platform/msi-ec/fw_version 2>/dev/null || journalctl -k -b --no-pager 2>/dev/null | grep -o "Firmware version is not supported: '[^']*'" | tail -1 | sed "s/.*: '//; s/'//"; }
+loaded() { [ -d /sys/devices/platform/msi-ec ]; }
+distro() { . /etc/os-release 2>/dev/null; echo "${ID:-unknown} ${ID_LIKE:-}"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+dkms_id() { dkms status 2>/dev/null | grep -E '^msi[-_]ec' | head -1 | sed -E 's#^(msi[-_]ec)[/, ]+([^,: ]+).*#\1/\2#'; }   # exact name/version as DKMS knows it (msi-ec or msi_ec)
+dkms_version() { dkms_id | cut -d/ -f2; }
+dkms_built() { dkms status -k "$KVER" 2>/dev/null | grep -E '^msi[-_]ec' | grep -q installed; }
+headers_ok() { [ -e "/lib/modules/$KVER/build/Makefile" ] || [ -e "/lib/modules/$KVER/build/include" ]; }
+
+state() {
+    vendor_ok || { echo not-msi; return; }
+    loaded && { echo ok; return; }
+    [ -n "$(dkms_version)" ] || { echo no-source; return; }
+    headers_ok || { echo no-headers; return; }
+    dkms_built || { echo not-built; return; }
+    local rec; rec="$(cat /var/lib/mcontrolcenter/state 2>/dev/null)"           # written by `fix` after a real failed attempt on this kernel
+    case "$rec" in "secureboot $KVER") echo secureboot; return ;; "unsupported-firmware $KVER") echo unsupported-firmware; return ;; esac
+    echo not-loaded                # built for this kernel, simply not loaded yet: `fix` will modprobe it
+}
+
+cmd_status() {
+    local st; st="$(state)"
+    if [ "$JSON" = 1 ]; then printf '{"state":"%s","kernel":"%s","fw":"%s","distro":"%s"}\n' "$st" "$KVER" "$(fw_string)" "$(distro | cut -d' ' -f1)"
+    else echo "state=$st"; echo "kernel=$KVER"; echo "fw=$(fw_string)"; echo "distro=$(distro)"; echo "dkms_version=$(dkms_version)"; echo "headers=$(headers_ok && echo yes || echo no)"; fi
+}
+
+# ── package manager helpers ──────────────────────────────────────────────────
+pm_install() {   # pm_install <pkg>...   (best effort, returns non-zero if the install failed)
+    local d; d="$(distro)"
+    case "$d" in
+        *debian*|*ubuntu*|*kali*|*mint*|*pop*) DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
+        *fedora*|*rhel*|*centos*|*rocky*|*alma*) dnf install -y "$@" ;;
+        *arch*|*manjaro*|*endeavouros*|*garuda*|*cachyos*) pacman -S --needed --noconfirm "$@" ;;
+        *suse*) zypper -n install "$@" ;;
+        *) log "unknown distro '$d': install these yourself: $*"; return 1 ;;
+    esac
+}
+install_headers() {
+    local d flavor; d="$(distro)"; flavor="${KVER##*-}"
+    case "$d" in
+        *debian*|*ubuntu*|*kali*|*mint*|*pop*)
+            pm_install "linux-headers-$KVER" || log "no exact headers package for $KVER (kernel may be newer than the archive)"
+            # the META package is what makes every FUTURE kernel arrive with its headers (and so with a DKMS rebuild)
+            pm_install "linux-headers-$flavor" 2>/dev/null || pm_install linux-headers-generic 2>/dev/null || true ;;
+        *fedora*|*rhel*|*centos*|*rocky*|*alma*) pm_install "kernel-devel-$KVER" || true; pm_install kernel-devel-matched 2>/dev/null || true ;;
+        *arch*|*manjaro*|*endeavouros*|*garuda*|*cachyos*)
+            case "$KVER" in *-lts*) pm_install linux-lts-headers ;; *-zen*) pm_install linux-zen-headers ;; *-hardened*) pm_install linux-hardened-headers ;; *cachyos*) pm_install linux-cachyos-headers ;; *) pm_install linux-headers ;; esac ;;
+        *suse*) pm_install "kernel-$flavor-devel" || pm_install kernel-default-devel ;;
+        *) return 1 ;;
+    esac
+}
+install_toolchain() {
+    case "$(distro)" in
+        *debian*|*ubuntu*|*kali*|*mint*|*pop*) pm_install dkms build-essential git ;;
+        *fedora*|*rhel*|*centos*|*rocky*|*alma*) pm_install dkms gcc make git ;;
+        *arch*|*manjaro*|*endeavouros*|*garuda*|*cachyos*) pm_install dkms base-devel git ;;
+        *suse*) pm_install dkms gcc make git ;;
+        *) return 1 ;;
+    esac
+}
+
+# ── msi-ec source -> DKMS ────────────────────────────────────────────────────
+register_source() {   # clone/update the newest msi-ec and (re)register it with DKMS
+    local tmp ver dest; tmp="$(mktemp -d)"
+    log "fetching the newest msi-ec source"
+    git clone --depth 1 "$MSIEC_GIT" "$tmp/msi-ec" >/dev/null 2>&1 || { log "could not download msi-ec (no network?)"; rm -rf "$tmp"; return 1; }
+    ver="0.$(date +%Y%m%d).$(git -C "$tmp/msi-ec" rev-parse --short HEAD)"
+    dest="/usr/src/msi-ec-$ver"
+    [ -d "$dest" ] || { rm -rf "$dest"; cp -r "$tmp/msi-ec" "$dest"; rm -rf "$dest/.git"; sed -i "s/@VERSION@/$ver/" "$dest/dkms.conf"; }
+    for old in $(dkms status 2>/dev/null | grep -E '^msi[-_]ec' | sed -E 's#^msi[-_]ec[/, ]+([^,: ]+).*#\1#' | sort -u); do
+        [ "$old" = "$ver" ] || { dkms remove "msi-ec/$old" --all >/dev/null 2>&1 || dkms remove "msi_ec/$old" --all >/dev/null 2>&1 || true; }
+    done
+    dkms add "msi-ec/$ver" >/dev/null 2>&1 || true
+    rm -rf "$tmp"; echo "$ver"
+}
+
+cmd_fix() {
+    [ "$(id -u)" = 0 ] || { echo "fix needs root: run with sudo or pkexec" >&2; exit 2; }
+    vendor_ok || { log "not an MSI laptop - nothing to do"; exit 0; }
+    local st; st="$(state)"
+    [ "$st" = ok ] && { log "msi-ec already loaded - nothing to do"; exit 0; }
+    log "state=$st on kernel $KVER"
+    have dkms && have git && have make && have gcc || { log "installing build tools"; install_toolchain || true; }
+    if ! headers_ok; then log "installing kernel headers for $KVER"; install_headers || true; fi
+    headers_ok || { log "kernel headers for $KVER are not available. Install them and re-run."; exit 3; }
+    # make sure future kernels also bring headers even if the exact package was already present
+    install_headers >/dev/null 2>&1 || true
+    local id; id="$(dkms_id)"
+    if [ -z "$id" ]; then ver="$(register_source)" || exit 4; id="msi-ec/$ver"; fi
+    log "building $id for $KVER"
+    dkms install "$id" -k "$KVER" --force 2>&1 | tail -3 >&2 || true
+    modprobe msi-ec 2>/dev/null && log "msi-ec loaded" || log "modprobe msi-ec failed: $(dmesg 2>/dev/null | grep -i msi_ec | tail -1)"
+    if ! loaded; then                       # driver built but refuses the firmware: the newest upstream source may know it
+        log "driver did not bind; trying the newest upstream msi-ec source"
+        nv="$(register_source)" && [ -n "$nv" ] && dkms install "msi-ec/$nv" -k "$KVER" --force 2>&1 | tail -2 >&2 && { modprobe -r msi-ec 2>/dev/null; modprobe msi-ec 2>/dev/null; }
+    fi
+    mkdir -p /etc/modules-load.d /var/lib/mcontrolcenter; echo msi-ec > /etc/modules-load.d/msi-ec.conf
+    if loaded; then rm -f /var/lib/mcontrolcenter/state; log "OK: msi-ec active ($(fw_string))"; exit 0; fi
+    if modprobe msi-ec 2>&1 | grep -qi "key was rejected"; then echo "secureboot $KVER" > /var/lib/mcontrolcenter/state
+    elif dmesg 2>/dev/null | tail -50 | grep -q "Firmware version is not supported"; then echo "unsupported-firmware $KVER" > /var/lib/mcontrolcenter/state; fi
+    log "msi-ec still not active: state=$(state) firmware=$(fw_string). If the firmware is unsupported, report it at https://github.com/BeardOverflow/msi-ec/issues"
+    exit 5
+}
+
+cmd_boot() {   # cheap no-op when healthy, so it is safe to run at every boot
+    vendor_ok || exit 0
+    loaded && exit 0
+    QUIET=1; case "$(state)" in unsupported-firmware|secureboot) log "state=$(state): needs a human (see mcontrolcenter-doctor status)"; exit 0 ;; esac
+    # give the network a moment (headers may need downloading right after a kernel update)
+    for _ in 1 2 3 4 5 6; do getent hosts github.com >/dev/null 2>&1 && break; sleep 5; done
+    cmd_fix
+}
+
+case "$CMD" in status) cmd_status ;; fix) cmd_fix ;; boot) cmd_boot ;; *) echo "usage: $0 status|fix|boot [--quiet] [--json]" >&2; exit 1 ;; esac

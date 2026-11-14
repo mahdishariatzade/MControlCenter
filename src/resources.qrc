@@ -2,6 +2,13 @@
     <qresource prefix="/images">
         <file alias="AppIcon">images/mcontrolcenter.png</file>
     </qresource>
+    <qresource prefix="/fonts">
+        <file alias="Rajdhani-Medium.ttf">../resources/fonts/Rajdhani-Medium.ttf</file>
+        <file alias="Rajdhani-SemiBold.ttf">../resources/fonts/Rajdhani-SemiBold.ttf</file>
+        <file alias="Rajdhani-Bold.ttf">../resources/fonts/Rajdhani-Bold.ttf</file>
+        <file alias="IBMPlexMono-Regular.ttf">../resources/fonts/IBMPlexMono-Regular.ttf</file>
+        <file alias="IBMPlexMono-Medium.ttf">../resources/fonts/IBMPlexMono-Medium.ttf</file>
+    </qresource>
     <qresource prefix="/translations">
         <file alias="lang_de_DE">i18n/MControlCenter_de_DE.qm</file>
         <file alias="lang_en">i18n/MControlCenter_en.qm</file>

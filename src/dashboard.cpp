@@ -1,387 +1,443 @@
 #include "dashboard.h"
 #include <QPainter>
 #include <QPainterPath>
-#include <QConicalGradient>
-#include <QLinearGradient>
-#include <QRadialGradient>
-#include <QAbstractButton>
-#include <QHBoxLayout>
+#include <QMouseEvent>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QGridLayout>
-#include <QLabel>
+#include <QFontDatabase>
 #include <QFile>
 #include <QDir>
 #include <QtMath>
 #include <QStyle>
-#include <QMouseEvent>
+#include <QProcess>
+#include <functional>
+#include <deque>
+#include <vector>
 #include <cmath>
 
 namespace {
-const QColor kBg(10, 14, 23), kCard(18, 26, 43), kEdge(35, 50, 82), kText(215, 227, 255), kDim(127, 146, 184);
-const QColor kCyan(25, 227, 255), kGreen(61, 255, 154), kAmber(255, 176, 32), kRed(255, 69, 96), kMagenta(255, 43, 214), kViolet(150, 110, 255);
+// ── palette: warm graphite, bone-white text, ONE accent that follows the mode ──
+const QColor kBg(14, 15, 17), kPanel(21, 23, 26), kLine(255, 255, 255, 38), kText(233, 230, 223), kDim(139, 143, 150), kHot(255, 70, 50);
+const QColor kAccentMode[4] = {QColor(255, 75, 31), QColor(231, 224, 205), QColor(110, 170, 215), QColor(150, 205, 90)};   // turbo, balanced, silent, eco
+QColor gAccent = kAccentMode[1], gAccentTarget = kAccentMode[1];
+bool gBoost = false; double gClock = 0;           // seconds since show, drives the hazard strip
 
-QString readFile(const QString &path) {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return {};
-    return QString::fromUtf8(f.readAll()).trimmed();
+const char *RAJ = "Rajdhani", *MONO = "IBM Plex Mono";
+QFont fnt(const char *fam, int px, int weight = QFont::Normal, qreal ls = 0) {
+    QFont f(fam); f.setPixelSize(px); f.setWeight(QFont::Weight(weight)); f.setLetterSpacing(QFont::AbsoluteSpacing, ls); return f;
 }
-qint64 readInt(const QString &path, qint64 def = -1) {
-    bool ok; qint64 v = readFile(path).toLongLong(&ok); return ok ? v : def;
+QString readFile(const QString &path) { QFile f(path); if (!f.open(QIODevice::ReadOnly)) return {}; return QString::fromUtf8(f.readAll()).trimmed(); }
+qint64 readInt(const QString &path, qint64 def = -1) { bool ok; qint64 v = readFile(path).toLongLong(&ok); return ok ? v : def; }
+QColor mix(const QColor &a, const QColor &b, double t) { t = qBound(0.0, t, 1.0); return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t, a.greenF() + (b.greenF() - a.greenF()) * t, a.blueF() + (b.blueF() - a.blueF()) * t, a.alphaF() + (b.alphaF() - a.alphaF()) * t); }
+QColor alpha(QColor c, double a) { c.setAlphaF(a); return c; }
+double easeOut(double t) { t = qBound(0.0, t, 1.0); return 1 - pow(1 - t, 3); }
+
+// panel outline with two cut corners (top-right, bottom-left) - the one shape the whole UI is built from
+QPainterPath chamfer(const QRectF &r, double c) {
+    QPainterPath p; p.moveTo(r.left(), r.top()); p.lineTo(r.right() - c, r.top()); p.lineTo(r.right(), r.top() + c); p.lineTo(r.right(), r.bottom());
+    p.lineTo(r.left() + c, r.bottom()); p.lineTo(r.left(), r.bottom() - c); p.closeSubpath(); return p;
 }
-QColor lerp(const QColor &a, const QColor &b, double t) {
-    t = qBound(0.0, t, 1.0);
-    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t, a.greenF() + (b.greenF() - a.greenF()) * t, a.blueF() + (b.blueF() - a.blueF()) * t);
-}
-// temperature -> colour: cool cyan, healthy green, warm amber, hot red
-QColor tempColor(double c) {
-    if (c < 55) return lerp(kCyan, kGreen, (c - 35) / 20);
-    if (c < 72) return lerp(kGreen, kAmber, (c - 55) / 17);
-    return lerp(kAmber, kRed, (c - 72) / 18);
-}
-void drawCard(QPainter &p, const QRectF &r, const QColor &accent = QColor()) {
-    QLinearGradient g(r.topLeft(), r.bottomRight());
-    g.setColorAt(0, QColor(22, 32, 54)); g.setColorAt(1, QColor(13, 19, 33));
-    p.setPen(QPen(accent.isValid() ? accent : kEdge, 1.2));
-    p.setBrush(g);
-    p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 14, 14);
-}
-void drawGlowArc(QPainter &p, const QRectF &r, double startDeg, double spanDeg, const QColor &c, double w) {
-    for (int i = 3; i >= 1; --i) {                       // soft glow: wide, translucent passes under the crisp arc
-        QColor g = c; g.setAlpha(22 * (4 - i));
-        QPen pen(g, w + i * 5, Qt::SolidLine, Qt::RoundCap); p.setPen(pen);
-        p.drawArc(r, int(startDeg * 16), int(spanDeg * 16));
+
+// LED-style segmented meter. `colorAt(v)` colours each lit segment by the value it represents.
+void segBar(QPainter &p, const QRectF &r, double frac, int n, double peak, const std::function<QColor(double)> &colorAt, double gap = 3) {
+    double w = (r.width() - gap * (n - 1)) / n;
+    for (int i = 0; i < n; ++i) {
+        QRectF s(r.left() + i * (w + gap), r.top(), w, r.height());
+        double lit = qBound(0.0, frac * n - i, 1.0);
+        p.setPen(Qt::NoPen);
+        p.setBrush(alpha(kText, 0.10)); p.drawRect(s);
+        if (lit > 0) { QColor c = colorAt((i + 0.5) / n); c.setAlphaF(0.35 + 0.65 * lit); p.setBrush(c); p.drawRect(s); }
     }
-    QPen pen(c, w, Qt::SolidLine, Qt::RoundCap); p.setPen(pen);
-    p.drawArc(r, int(startDeg * 16), int(spanDeg * 16));
+    if (peak >= 0) {                                     // peak-hold tick: a taller mark that decays slowly
+        int pi = qBound(0, int(peak * n), n - 1);
+        double x = r.left() + pi * (w + gap) + w / 2;
+        p.setPen(QPen(gAccent, 2)); p.drawLine(QPointF(x, r.top() - 5), QPointF(x, r.bottom() + 5));
+    }
 }
-QString fmtEta(double hours) {
-    if (hours <= 0 || hours > 48) return {};
-    int m = int(hours * 60 + 0.5); return QString("%1h %2m").arg(m / 60).arg(m % 60, 2, 10, QChar('0'));
-}
+QString fmtEta(double hours) { if (hours <= 0 || hours > 48) return {}; int m = int(hours * 60 + 0.5); return QString("%1h %2m").arg(m / 60).arg(m % 60, 2, 10, QChar('0')); }
+QColor tempColor(double v) { double c = 30 + v * 70; return c < 72 ? kText : c < 86 ? gAccent : kHot; }
 }
 
-// ───────────────────────────── arc gauge (temperature) ─────────────────────────────
-class ArcGauge : public QWidget {
+// ───────────────────────────── panel base: chamfered frame, index + title, entrance animation ─────────────────────────────
+class Panel : public QWidget {
 public:
-    ArcGauge(const QString &title, QWidget *p) : QWidget(p), title(title) { setMinimumSize(170, 190); }
-    void set(double v, bool isOff = false, bool isNone = false) { target = v; off = isOff; none = isNone; }
-    void step() { shown += (target - shown) * 0.18; if (qAbs(target - shown) < 0.05) shown = target; update(); }
-    QString title, sub;
-    bool off = false, none = false;
-    double target = 0, shown = 0, lo = 30, hi = 100;
+    Panel(const QString &idx, const QString &title, QWidget *p) : QWidget(p), idx(idx), title(title) { setMouseTracking(true); }
+    QString idx, title; double reveal = 0, hov = 0, delay = 0; bool hovering = false;
+    void tick(double clock) { reveal = easeOut((clock - delay) / 0.38); hov += ((hovering ? 1 : 0) - hov) * 0.22; update(); }
 protected:
+    virtual void paintBody(QPainter &, const QRectF &) = 0;
+    void enterEvent(QEnterEvent *) override { hovering = true; }
+    void leaveEvent(QEvent *) override { hovering = false; }
     void paintEvent(QPaintEvent *) override {
-        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
-        drawCard(p, rect());
-        double side = qMin(width() - 34, height() - 62); QRectF r((width() - side) / 2, 16, side, side);
-        QRectF arc = r.adjusted(10, 10, -10, -10);
-        p.setBrush(Qt::NoBrush); p.setPen(QPen(QColor(30, 42, 68), 11, Qt::SolidLine, Qt::RoundCap)); p.drawArc(arc, 225 * 16, -270 * 16);
-        for (int i = 0; i <= 27; ++i) {                          // tick ring
-            double a = qDegreesToRadians(225.0 - i * 10.0); QPointF c = arc.center(); double rr = arc.width() / 2 - 14;
-            p.setPen(QPen(QColor(70, 90, 130, 140), i % 9 == 0 ? 2 : 1));
-            p.drawLine(c + QPointF(cos(a), -sin(a)) * rr, c + QPointF(cos(a), -sin(a)) * (rr - (i % 9 == 0 ? 7 : 4)));
-        }
-        double f = qBound(0.0, (shown - lo) / (hi - lo), 1.0);
-        QColor c = (off || none) ? QColor(70, 85, 120) : tempColor(shown);
-        if (!off && !none && f > 0.001) { p.setBrush(Qt::NoBrush); drawGlowArc(p, arc, 225, -270 * f, c, 11); }
-        p.setPen(c);
-        QFont big = font(); big.setPixelSize(int(side * 0.27)); big.setBold(true); p.setFont(big);
-        QString txt = none ? "—" : off ? "OFF" : QString::number(int(shown + 0.5));
-        p.drawText(r.adjusted(0, 0, 0, -side * 0.04), Qt::AlignCenter, txt);
-        QFont small = font(); small.setPixelSize(int(side * 0.1)); p.setFont(small); p.setPen(kDim);
-        if (!off && !none) p.drawText(QRectF(r.left(), r.center().y() + side * 0.14, r.width(), side * 0.15), Qt::AlignCenter, "°C");
-        QFont t = font(); t.setPixelSize(13); t.setBold(true); t.setLetterSpacing(QFont::AbsoluteSpacing, 1.5); p.setFont(t); p.setPen(kText);
-        p.drawText(QRectF(0, height() - 40, width(), 20), Qt::AlignCenter, title);
-        QFont s = font(); s.setPixelSize(11); p.setFont(s); p.setPen(kDim);
-        p.drawText(QRectF(0, height() - 22, width(), 16), Qt::AlignCenter, sub);
+        if (reveal <= 0.001) return;
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setOpacity(reveal); p.translate(0, (1 - reveal) * 14);
+        QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1); QPainterPath path = chamfer(r, 13);
+        p.fillPath(path, kPanel);
+        p.setPen(QPen(mix(kLine, alpha(gAccent, 0.8), hov * 0.7), 1)); p.setBrush(Qt::NoBrush); p.drawPath(path);
+        p.setPen(QPen(gAccent, 2));                                    // registration ticks on the two square corners
+        p.drawLine(r.topLeft() + QPointF(0, 11), r.topLeft()); p.drawLine(r.topLeft(), r.topLeft() + QPointF(11, 0));
+        p.drawLine(r.bottomRight() - QPointF(0, 11), r.bottomRight()); p.drawLine(r.bottomRight(), r.bottomRight() - QPointF(11, 0));
+        p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(gAccent); p.drawText(QRectF(r.left() + 18, r.top() + 12, 28, 14), Qt::AlignLeft | Qt::AlignVCenter, idx);
+        p.setFont(fnt(RAJ, 14, QFont::DemiBold, 2.2)); p.setPen(kDim); p.drawText(QRectF(r.left() + 46, r.top() + 11, r.width() - 80, 16), Qt::AlignLeft | Qt::AlignVCenter, title);
+        paintBody(p, QRectF(r.left() + 18, r.top() + 38, r.width() - 36, r.height() - 38 - 14));
     }
 };
 
-// ───────────────────────────── spinning fan ─────────────────────────────
-class FanDial : public QWidget {
+// ───────────────────────────── 01 thermal ─────────────────────────────
+class ThermalPanel : public Panel {
 public:
-    FanDial(const QString &title, QWidget *p) : QWidget(p), title(title) { setMinimumSize(170, 190); }
-    void set(int pctv, int rpmv) { pct = pctv; rpm = rpmv; }
+    ThermalPanel(QWidget *p) : Panel("01", "THERMAL", p) { setMinimumHeight(272); }
+    double cpu = 0, gpu = 0, cpuPeak = 0, gpuPeak = 0, cpuS = 0, gpuS = 0; bool hasGpu = false, gpuOff = false, hasNvme = false; int nvme = 0; QString cpuName, gpuName;
+    void step() { cpuS += (cpu - cpuS) * 0.2; gpuS += (gpu - gpuS) * 0.2; }
+protected:
+    void row(QPainter &p, const QRectF &r, const QString &name, const QString &sub, double v, double peak, bool off) {
+        p.setFont(fnt(RAJ, 15, QFont::DemiBold, 2)); p.setPen(kText); p.drawText(QRectF(r.left(), r.top(), 80, 18), Qt::AlignLeft, name);
+        p.setFont(fnt(MONO, 10, QFont::Normal, 0)); p.setPen(kDim); p.drawText(QRectF(r.left() + 48, r.top() + 2, r.width() - 48, 16), Qt::AlignLeft | Qt::AlignVCenter, sub);
+        QString num = off ? QStringLiteral("—") : QString::number(int(v + 0.5));
+        p.setFont(fnt(RAJ, 66, QFont::Bold)); p.setPen(off ? kDim : tempColor((v - 30) / 70)); p.drawText(QRectF(r.left() - 2, r.top() + 12, 120, 70), Qt::AlignLeft | Qt::AlignVCenter, num);
+        if (!off) { p.setFont(fnt(RAJ, 20, QFont::Medium)); p.setPen(kDim); p.drawText(QRectF(r.left() + 84, r.top() + 26, 40, 24), Qt::AlignLeft | Qt::AlignTop, "°C"); }
+        else { p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(kDim); p.drawText(QRectF(r.left() + 52, r.top() + 44, 80, 16), Qt::AlignLeft, "ASLEEP"); }
+        QRectF bar(r.left() + 130, r.top() + 36, r.width() - 130, 16);
+        segBar(p, bar, off ? 0 : (v - 30) / 70, 40, off ? -1 : (peak - 30) / 70, [](double f) { return tempColor(f); }, 2.5);
+        p.setFont(fnt(MONO, 9, QFont::Normal, 0)); p.setPen(kDim);
+        for (int t = 40; t <= 100; t += 20) { double x = bar.left() + (t - 30) / 70.0 * bar.width(); p.drawText(QRectF(x - 16, bar.bottom() + 8, 32, 12), Qt::AlignCenter, QString::number(t)); }
+        if (!off) { p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(gAccent); p.drawText(QRectF(bar.right() - 90, bar.top() - 20, 90, 12), Qt::AlignRight, QString("PEAK %1°").arg(int(peak + 0.5))); }
+    }
+    void paintBody(QPainter &p, const QRectF &b) override {
+        int rows = hasGpu ? 2 : 1; double rh = b.height() / rows;
+        row(p, QRectF(b.left(), b.top(), b.width(), rh), "CPU", cpuName, cpuS, cpuPeak, false);
+        if (hasGpu) {
+            p.setPen(QPen(kLine, 1, Qt::DotLine)); p.drawLine(QPointF(b.left(), b.top() + rh - 2), QPointF(b.right(), b.top() + rh - 2));
+            row(p, QRectF(b.left(), b.top() + rh, b.width(), rh), "GPU", gpuName, gpuS, gpuPeak, gpuOff);
+        } else if (hasNvme) {
+            p.setFont(fnt(MONO, 10, QFont::Normal, 0)); p.setPen(kDim); p.drawText(QRectF(b.left(), b.bottom() - 14, b.width(), 14), Qt::AlignLeft, QString("NVMe  %1°C").arg(nvme));
+        }
+    }
+};
+
+// ───────────────────────────── 02 cooling ─────────────────────────────
+class FanPanel : public Panel {
+public:
+    FanPanel(QWidget *p) : Panel("02", "COOLING", p) { setMinimumHeight(272); }
+    int pct[2] = {-1, -1}, rpm[2] = {0, 0}; double shown[2] = {0, 0}, speed[2] = {0, 0}, rot[2] = {0, 0}; bool two = false, boost = false, boostOk = true;
+    std::function<void(bool)> onBoost;
     void step() {
-        shownPct += (qMax(pct, 0) - shownPct) * 0.12;
-        speed += ((shownPct < 1 ? 0 : 2.0 + shownPct * 0.22) - speed) * 0.08;    // deg per frame, eased so the fan spins up/down
-        rot = fmod(rot + speed, 360.0); update();
-    }
-    QString title;
-    int pct = -1, rpm = 0; double shownPct = 0, speed = 0, rot = 0;
-protected:
-    void paintEvent(QPaintEvent *) override {
-        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
-        drawCard(p, rect());
-        double side = qMin(width() - 34, height() - 62); QRectF r((width() - side) / 2, 16, side, side);
-        QRectF arc = r.adjusted(10, 10, -10, -10); QPointF c = r.center();
-        QColor col = lerp(kCyan, kMagenta, shownPct / 100.0);
-        p.setBrush(Qt::NoBrush); p.setPen(QPen(QColor(30, 42, 68), 7, Qt::SolidLine, Qt::RoundCap)); p.drawArc(arc, 225 * 16, -270 * 16);
-        if (pct >= 0 && shownPct > 0.5) drawGlowArc(p, arc, 225, -270 * qMin(shownPct, 100.0) / 100.0, col, 7);
-        p.save(); p.translate(c); p.rotate(rot);
-        double R = arc.width() / 2 - 16;
-        for (int i = 0; i < 7; ++i) {
-            QPainterPath b; b.moveTo(R * 0.16, 0);
-            b.cubicTo(R * 0.35, -R * 0.62, R * 0.92, -R * 0.62, R * 0.98, -R * 0.12);
-            b.cubicTo(R * 0.80, -R * 0.20, R * 0.50, -R * 0.12, R * 0.16, R * 0.10); b.closeSubpath();
-            QLinearGradient g(0, 0, R, 0); QColor a = col; a.setAlpha(230); QColor z = col; z.setAlpha(60); g.setColorAt(0, a); g.setColorAt(1, z);
-            p.setBrush(g); p.setPen(QPen(col.lighter(130), 0.8)); p.drawPath(b); p.rotate(360.0 / 7);
+        for (int i = 0; i < 2; ++i) {
+            shown[i] += (qMax(pct[i], 0) - shown[i]) * 0.12;
+            double want = shown[i] < 1 ? 0 : 1.5 + shown[i] * 0.2;
+            speed[i] += (want - speed[i]) * 0.05;                       // inertia: spins up and coasts down like a real fan
+            rot[i] = fmod(rot[i] + speed[i], 360.0);
         }
-        p.restore();
-        p.setPen(Qt::NoPen); QRadialGradient hub(c, R * 0.2); hub.setColorAt(0, QColor(235, 245, 255)); hub.setColorAt(1, col.darker(160)); p.setBrush(hub); p.drawEllipse(c, R * 0.17, R * 0.17);
-        QFont t = font(); t.setPixelSize(13); t.setBold(true); t.setLetterSpacing(QFont::AbsoluteSpacing, 1.5); p.setFont(t); p.setPen(kText);
-        p.drawText(QRectF(0, height() - 40, width(), 20), Qt::AlignCenter, title);
-        QFont s = font(); s.setPixelSize(11); p.setFont(s); p.setPen(kDim);
-        QString sub = pct < 0 ? "no data" : (rpm > 0 ? QString("%1 %  ·  %2 rpm").arg(pct).arg(rpm) : QString("%1 %").arg(pct));
-        p.drawText(QRectF(0, height() - 22, width(), 16), Qt::AlignCenter, sub);
+    }
+protected:
+    QRectF btn;
+    void mousePressEvent(QMouseEvent *e) override { if (boostOk && btn.contains(e->position()) && onBoost) onBoost(!boost); }
+    void mouseMoveEvent(QMouseEvent *e) override { setCursor(boostOk && btn.contains(e->position()) ? Qt::PointingHandCursor : Qt::ArrowCursor); }
+    void glyph(QPainter &p, QPointF c, double R, double rot, const QColor &col) {
+        p.save(); p.translate(c); p.setPen(QPen(alpha(kText, 0.25), 1.2)); p.setBrush(Qt::NoBrush); p.drawEllipse(QPointF(0, 0), R, R);
+        p.rotate(rot); p.setPen(Qt::NoPen); p.setBrush(col);
+        for (int i = 0; i < 7; ++i) {                      // flat, geometric blades: a swept wedge, not a glowing flower
+            QPainterPath b; b.moveTo(R * 0.14, 0); b.lineTo(R * 0.92, -R * 0.06); b.quadTo(R * 0.98, R * 0.34, R * 0.52, R * 0.5); b.quadTo(R * 0.40, R * 0.2, R * 0.14, R * 0.12); b.closeSubpath();
+            p.drawPath(b); p.rotate(360.0 / 7);
+        }
+        p.restore(); p.setBrush(kPanel); p.setPen(QPen(col, 1.5)); p.drawEllipse(c, R * 0.15, R * 0.15);
+    }
+    void cell(QPainter &p, const QRectF &r, int i, const QString &name) {
+        QColor col = pct[i] < 0 ? kDim : mix(kText, gAccent, shown[i] / 100.0);
+        glyph(p, QPointF(r.left() + 30, r.top() + 36), 27, rot[i], alpha(col, 0.92));
+        p.setFont(fnt(RAJ, 15, QFont::DemiBold, 2)); p.setPen(kText); p.drawText(QRectF(r.left() + 72, r.top() - 2, 100, 18), Qt::AlignLeft, name);
+        p.setFont(fnt(RAJ, 40, QFont::Bold)); p.setPen(pct[i] < 0 ? kDim : kText);
+        p.drawText(QRectF(r.left() + 70, r.top() + 12, r.width() - 70, 44), Qt::AlignLeft | Qt::AlignVCenter, rpm[i] > 0 ? QString::number(rpm[i]) : (pct[i] > 0 ? QString("%1%").arg(pct[i]) : "—"));
+        p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(kDim); p.drawText(QRectF(r.left() + 72, r.top() + 54, 170, 14), Qt::AlignLeft, rpm[i] > 0 ? QString("RPM · %1 % PWM").arg(qMax(pct[i], 0)) : "PWM");
+        segBar(p, QRectF(r.left(), r.top() + 76, r.width(), 8), qMax(pct[i], 0) / 100.0, 20, -1, [col](double) { return col; }, 2.5);
+    }
+    void paintBody(QPainter &p, const QRectF &b) override {
+        double h = 92;
+        if (two) { cell(p, QRectF(b.left(), b.top(), b.width(), h), 0, "CPU FAN"); cell(p, QRectF(b.left(), b.top() + h + 4, b.width(), h), 1, "GPU FAN"); }
+        else cell(p, QRectF(b.left(), b.top() + 6, b.width(), h), 0, "FAN");
+        if (!boostOk) { btn = QRectF(); return; }
+        btn = QRectF(b.left(), b.bottom() - 28, b.width(), 28); QPainterPath bp = chamfer(btn, 7);
+        p.setPen(QPen(boost ? gAccent : kLine, 1)); p.setBrush(boost ? alpha(gAccent, 0.18) : Qt::NoBrush); p.drawPath(bp);
+        p.setFont(fnt(RAJ, 14, QFont::DemiBold, 2)); p.setPen(boost ? gAccent : kText); p.drawText(btn.adjusted(12, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, "COOLER BOOST");
+        p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(boost ? gAccent : kDim); p.drawText(btn.adjusted(0, 0, -12, 0), Qt::AlignRight | Qt::AlignVCenter, boost ? "ON" : "OFF");
     }
 };
 
-// ───────────────────────────── battery ring ─────────────────────────────
-class BatteryRing : public QWidget {
+// ───────────────────────────── 03 power ─────────────────────────────
+class PowerPanel : public Panel {
 public:
-    BatteryRing(QWidget *p) : QWidget(p) { setMinimumSize(170, 190); }
-    void step() { shown += (cap - shown) * 0.12; phase = fmod(phase + 0.06, 2 * M_PI); update(); }
-    int cap = 0, limit = 100; double shown = 0, phase = 0; bool charging = false, plugged = false; QString line1, line2;
+    PowerPanel(QWidget *p) : Panel("03", "POWER", p) { setMinimumHeight(272); }
+    int cap = 0, limit = 100; double shown = 0; bool charging = false, limitOk = true; QString state, draw, eta, health, cycles; bool ac = false;
+    std::function<void(int)> onLimit;
+    void step() { shown += (cap - shown) * 0.1; }
 protected:
-    void paintEvent(QPaintEvent *) override {
-        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
-        drawCard(p, rect(), charging ? QColor(40, 120, 90) : QColor());
-        double side = qMin(width() - 34, height() - 62); QRectF r((width() - side) / 2, 16, side, side);
-        QRectF arc = r.adjusted(10, 10, -10, -10);
-        QColor col = shown < 15 ? kRed : shown < 30 ? kAmber : kGreen;
-        p.setBrush(Qt::NoBrush); p.setPen(QPen(QColor(30, 42, 68), 11, Qt::SolidLine, Qt::RoundCap)); p.drawArc(arc, 225 * 16, -270 * 16);
-        if (limit < 100) {                                        // the part the charge limit keeps you out of, drawn as a dim hatch
-            p.setPen(QPen(QColor(255, 176, 32, 50), 11, Qt::SolidLine, Qt::FlatCap)); p.drawArc(arc, int((225 - 2.7 * limit) * 16), int(-2.7 * (100 - limit) * 16));
+    QRectF chips[3];
+    void mousePressEvent(QMouseEvent *e) override { if (!limitOk) return; const int v[3] = {60, 80, 100}; for (int i = 0; i < 3; ++i) if (chips[i].contains(e->position()) && onLimit) onLimit(v[i]); }
+    void mouseMoveEvent(QMouseEvent *e) override { bool on = false; if (limitOk) for (auto &c : chips) on |= c.contains(e->position()); setCursor(on ? Qt::PointingHandCursor : Qt::ArrowCursor); }
+    void paintBody(QPainter &p, const QRectF &b) override {
+        QColor c = shown < 15 ? kHot : kText;
+        p.setFont(fnt(RAJ, 66, QFont::Bold)); p.setPen(c); p.drawText(QRectF(b.left() - 2, b.top() - 4, 110, 70), Qt::AlignLeft | Qt::AlignVCenter, QString::number(int(shown + 0.5)));
+        p.setFont(fnt(RAJ, 20, QFont::Medium)); p.setPen(kDim); p.drawText(QRectF(b.left() + 84, b.top() + 8, 30, 24), Qt::AlignLeft | Qt::AlignTop, "%");
+        p.setFont(fnt(RAJ, 15, QFont::DemiBold, 2)); p.setPen(charging ? gAccent : kText); p.drawText(QRectF(b.left() + 120, b.top() + 6, b.width() - 120, 18), Qt::AlignRight, state);
+        p.setFont(fnt(MONO, 10, QFont::Normal, 0)); p.setPen(kDim); p.drawText(QRectF(b.left() + 120, b.top() + 26, b.width() - 120, 14), Qt::AlignRight, ac ? "AC connected" : "on battery");
+        QRectF bar(b.left(), b.top() + 66, b.width(), 14);
+        bool low = shown < 15; segBar(p, bar, shown / 100.0, 25, -1, [low](double) { return low ? kHot : kText; }, 2.5);
+        if (limit < 100) {                                                  // notch where the charge limit stops
+            double x = bar.left() + limit / 100.0 * bar.width();
+            p.setPen(QPen(gAccent, 2)); p.drawLine(QPointF(x, bar.top() - 7), QPointF(x, bar.bottom() + 7));
+            p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(gAccent); p.drawText(QRectF(x - 40, bar.bottom() + 8, 80, 12), Qt::AlignCenter, QString("LIMIT %1").arg(limit));
         }
-        if (shown > 0.5) drawGlowArc(p, arc, 225, -2.7 * shown, col, 11);
-        if (limit < 100) {                                        // limit marker
-            double a = qDegreesToRadians(225.0 - 2.7 * limit); QPointF c = arc.center(), d(cos(a), -sin(a)); double rr = arc.width() / 2;
-            p.setPen(QPen(kAmber, 3, Qt::SolidLine, Qt::RoundCap)); p.drawLine(c + d * (rr - 12), c + d * (rr + 9));
+        double y = bar.bottom() + 28; const std::pair<const char *, QString> kv[] = {{"DRAW", draw}, {"TIME", eta}, {"HEALTH", health}, {"CYCLES", cycles}};
+        for (auto &e : kv) {
+            p.setFont(fnt(MONO, 10, QFont::Normal, 1)); p.setPen(kDim); p.drawText(QRectF(b.left(), y, 80, 14), Qt::AlignLeft, e.first);
+            p.setFont(fnt(MONO, 11, QFont::Medium, 0)); p.setPen(kText); p.drawText(QRectF(b.left() + 70, y, b.width() - 70, 14), Qt::AlignRight, e.second.isEmpty() ? "—" : e.second); y += 17;
         }
-        p.setPen(col); QFont big = font(); big.setPixelSize(int(side * 0.27)); big.setBold(true); p.setFont(big);
-        p.drawText(r.adjusted(0, 0, 0, -side * 0.04), Qt::AlignCenter, QString::number(int(shown + 0.5)));
-        QFont small = font(); small.setPixelSize(int(side * 0.1)); p.setFont(small); p.setPen(kDim);
-        p.drawText(QRectF(r.left(), r.center().y() + side * 0.14, r.width(), side * 0.15), Qt::AlignCenter, "%");
-        if (charging) {                                           // pulsing bolt
-            QPainterPath b; QPointF c(r.center().x(), r.top() + side * 0.12); double s = side * 0.07;
-            b.moveTo(c + QPointF(s * 0.4, -s)); b.lineTo(c + QPointF(-s * 0.5, s * 0.15)); b.lineTo(c + QPointF(0, s * 0.15)); b.lineTo(c + QPointF(-s * 0.4, s)); b.lineTo(c + QPointF(s * 0.5, -s * 0.15)); b.lineTo(c + QPointF(0, -s * 0.15)); b.closeSubpath();
-            QColor g = kGreen; g.setAlphaF(0.55 + 0.45 * sin(phase)); p.setBrush(g); p.setPen(Qt::NoPen); p.drawPath(b);
+        if (limitOk) {
+            double w = (b.width() - 12) / 3; const int v[3] = {60, 80, 100};
+            for (int i = 0; i < 3; ++i) {
+                chips[i] = QRectF(b.left() + i * (w + 6), b.bottom() - 24, w, 24); bool on = (i == 0 && limit <= 60) || (i == 1 && limit > 60 && limit <= 80) || (i == 2 && limit > 80);
+                p.setPen(QPen(on ? gAccent : kLine, 1)); p.setBrush(on ? gAccent : Qt::NoBrush); p.drawPath(chamfer(chips[i], 6));
+                p.setFont(fnt(RAJ, 14, QFont::DemiBold, 1)); p.setPen(on ? kBg : kText); p.drawText(chips[i], Qt::AlignCenter, QString("%1%").arg(v[i]));
+            }
         }
-        QFont t = font(); t.setPixelSize(13); t.setBold(true); t.setLetterSpacing(QFont::AbsoluteSpacing, 1.5); p.setFont(t); p.setPen(kText);
-        p.drawText(QRectF(0, height() - 40, width(), 20), Qt::AlignCenter, line1);
-        QFont s = font(); s.setPixelSize(11); p.setFont(s); p.setPen(kDim);
-        p.drawText(QRectF(0, height() - 22, width(), 16), Qt::AlignCenter, line2);
     }
 };
 
-// ───────────────────────────── history graph ─────────────────────────────
-class HistoryGraph : public QWidget {
+// ───────────────────────────── 04 history graph ─────────────────────────────
+class GraphPanel : public Panel {
 public:
-    HistoryGraph(QWidget *p) : QWidget(p) { setMinimumSize(380, 190); }
-    void push(double cpu, double gpu, double watts) {
-        for (auto *d : {&c, &g, &w}) if (d->size() >= N) d->pop_front();
-        c.push_back(cpu); g.push_back(gpu); w.push_back(watts); update();
-    }
+    GraphPanel(QWidget *p) : Panel("04", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(150); }
+    void push(double cpu, double gpu, double watts) { for (auto *d : {&c, &g, &w}) if (d->size() >= N) d->pop_front(); c.push_back(cpu); g.push_back(gpu); w.push_back(watts); }
+    bool hasGpu = false;
 protected:
-    void paintEvent(QPaintEvent *) override {
-        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
-        drawCard(p, rect());
-        QRectF plot(46, 34, width() - 46 - 50, height() - 34 - 22);
-        QFont f = font(); f.setPixelSize(10); p.setFont(f);
-        for (int t = 40; t <= 100; t += 20) {                    // grid + temperature axis
-            double y = plot.bottom() - (t - 30) / 70.0 * plot.height();
-            p.setPen(QPen(QColor(40, 56, 90, 140), 1, Qt::DotLine)); p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y));
-            p.setPen(kDim); p.drawText(QRectF(0, y - 8, 40, 16), Qt::AlignRight | Qt::AlignVCenter, QString("%1°").arg(t));
-        }
+    double hoverX = -1;
+    void mouseMoveEvent(QMouseEvent *e) override { hoverX = e->position().x(); }
+    void leaveEvent(QEvent *e) override { Panel::leaveEvent(e); hoverX = -1; }
+    void paintBody(QPainter &p, const QRectF &b) override {
+        QRectF plot(b.left() + 34, b.top() + 4, b.width() - 34 - 44, b.height() - 4 - 16);
+        p.setFont(fnt(MONO, 9, QFont::Normal, 0));
+        for (int t = 40; t <= 100; t += 20) { double y = plot.bottom() - (t - 30) / 70.0 * plot.height(); p.setPen(QPen(alpha(kText, 0.08), 1, Qt::DashLine)); p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y)); p.setPen(kDim); p.drawText(QRectF(b.left(), y - 7, 30, 14), Qt::AlignRight | Qt::AlignVCenter, QString::number(t)); }
         double wmax = 30; for (double v : w) wmax = qMax(wmax, v); wmax = ceil(wmax / 10) * 10;
-        p.setPen(kDim); p.drawText(QRectF(plot.right() + 4, plot.top() - 8, 46, 16), Qt::AlignLeft | Qt::AlignVCenter, QString("%1 W").arg(int(wmax)));
-        p.drawText(QRectF(plot.right() + 4, plot.bottom() - 8, 46, 16), Qt::AlignLeft | Qt::AlignVCenter, "0 W");
-        p.drawText(QRectF(plot.left(), plot.bottom() + 4, 80, 14), Qt::AlignLeft, "3 min ago"); p.drawText(QRectF(plot.right() - 80, plot.bottom() + 4, 80, 14), Qt::AlignRight, "now");
-        auto line = [&](const std::deque<double> &d, double lo, double hi, const QColor &col, bool fill) {
-            if (d.size() < 2) return;
-            QPainterPath path; bool open = false; double dx = plot.width() / (N - 1); double x0 = plot.right() - dx * (d.size() - 1);
-            QPointF last, first;
+        p.setPen(kDim); p.drawText(QRectF(plot.right() + 6, plot.top() - 6, 40, 12), Qt::AlignLeft, QString("%1W").arg(int(wmax)));
+        p.drawText(QRectF(plot.left(), plot.bottom() + 3, 60, 12), Qt::AlignLeft, "-3:00"); p.drawText(QRectF(plot.right() - 40, plot.bottom() + 3, 40, 12), Qt::AlignRight, "now");
+        double dx = plot.width() / (N - 1);
+        auto path = [&](const std::deque<double> &d, double lo, double hi, QPainterPath *fill) {
+            QPainterPath pa; bool open = false; double x0 = plot.right() - dx * (d.size() - 1); double lx = 0;
             for (size_t i = 0; i < d.size(); ++i) {
                 if (d[i] < 0) { open = false; continue; }
                 QPointF pt(x0 + i * dx, plot.bottom() - qBound(0.0, (d[i] - lo) / (hi - lo), 1.0) * plot.height());
-                if (!open) { path.moveTo(pt); first = pt; open = true; } else path.lineTo(pt);
-                last = pt;
+                if (!open) { pa.moveTo(pt); open = true; } else pa.lineTo(pt); lx = pt.x();
             }
-            if (fill && open) {
-                QPainterPath a = path; a.lineTo(last.x(), plot.bottom()); a.lineTo(first.x(), plot.bottom()); a.closeSubpath();
-                QLinearGradient g(0, plot.top(), 0, plot.bottom()); QColor t = col; t.setAlpha(80); QColor b = col; b.setAlpha(0); g.setColorAt(0, t); g.setColorAt(1, b);
-                p.setPen(Qt::NoPen); p.setBrush(g); p.drawPath(a);
-            }
-            p.setBrush(Qt::NoBrush); QColor gl = col; gl.setAlpha(60); p.setPen(QPen(gl, 5)); p.drawPath(path); p.setPen(QPen(col, 2)); p.drawPath(path);
+            if (fill && open) { *fill = pa; fill->lineTo(lx, plot.bottom()); fill->lineTo(x0, plot.bottom()); fill->closeSubpath(); }
+            return pa;
         };
-        line(w, 0, wmax, kViolet, false); line(g, 30, 100, kMagenta, false); line(c, 30, 100, kCyan, true);
-        int x = 16; QFont lf = font(); lf.setPixelSize(12); lf.setBold(true); p.setFont(lf);
-        struct L { QColor c; QString n; } ls[] = {{kCyan, "CPU °C"}, {kMagenta, "GPU °C"}, {kViolet, "BATTERY W"}};
-        for (auto &l : ls) { p.setBrush(l.c); p.setPen(Qt::NoPen); p.drawEllipse(QPointF(x, 18), 4, 4); p.setPen(kText); p.drawText(QRectF(x + 9, 9, 110, 18), Qt::AlignVCenter, l.n); x += 118; }
+        QPainterPath area; QPainterPath cp = path(c, 30, 100, &area);
+        p.setPen(Qt::NoPen); p.setBrush(alpha(gAccent, 0.10)); p.drawPath(area);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(alpha(kText, 0.45), 1.3, Qt::SolidLine)); p.drawPath(path(w, 0, wmax, nullptr));
+        if (hasGpu) { p.setPen(QPen(kText, 1.3, Qt::DashLine)); p.drawPath(path(g, 30, 100, nullptr)); }
+        p.setPen(QPen(gAccent, 1.8, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin)); p.drawPath(cp);
+        p.setFont(fnt(MONO, 10, QFont::Medium, 1)); double x = b.right() - 240;
+        struct K { QColor c; Qt::PenStyle s; QString n; bool on; } ks[] = {{gAccent, Qt::SolidLine, "CPU", true}, {kText, Qt::DashLine, "GPU", hasGpu}, {alpha(kText, 0.45), Qt::SolidLine, "WATTS", true}};
+        for (auto &k : ks) { if (!k.on) continue; p.setPen(QPen(k.c, 2, k.s)); p.drawLine(QPointF(x, b.top() - 21), QPointF(x + 16, b.top() - 21)); p.setPen(kDim); p.drawText(QRectF(x + 22, b.top() - 28, 60, 14), Qt::AlignLeft | Qt::AlignVCenter, k.n); x += 78; }
+        if (hoverX >= plot.left() && hoverX <= plot.right() && !c.empty()) {      // crosshair read-out
+            int back = int(round((plot.right() - hoverX) / dx)); int idx = int(c.size()) - 1 - back;
+            if (idx >= 0 && idx < int(c.size())) {
+                double xx = plot.right() - back * dx; p.setPen(QPen(alpha(kText, 0.5), 1)); p.drawLine(QPointF(xx, plot.top()), QPointF(xx, plot.bottom()));
+                QString t = QString("-%1s   CPU %2°").arg(back).arg(int(c[idx])); if (hasGpu && g[idx] > 0) t += QString("   GPU %1°").arg(int(g[idx])); t += QString("   %1 W").arg(w[idx], 0, 'f', 1);
+                QFont f = fnt(MONO, 10, QFont::Medium, 0); p.setFont(f); QRectF tr(0, 0, QFontMetricsF(f).horizontalAdvance(t) + 16, 20); tr.moveTopLeft(QPointF(qBound(plot.left(), xx - tr.width() / 2, plot.right() - tr.width()), plot.top() + 2));
+                p.setPen(QPen(kLine, 1)); p.setBrush(kBg); p.drawRect(tr); p.setPen(kText); p.drawText(tr, Qt::AlignCenter, t);
+            }
+        }
     }
 private:
-    static constexpr int N = 180;
-    std::deque<double> c, g, w;
+    static constexpr int N = 180; std::deque<double> c, g, w;
 };
 
-// ───────────────────────────── tile button ─────────────────────────────
-class ModeTile : public QAbstractButton {
+// ───────────────────────────── tile strip (modes / presets) ─────────────────────────────
+class TileStrip : public QWidget {
 public:
-    ModeTile(const QString &title, const QString &sub, const QColor &accent, QWidget *p, bool checkable = true) : QAbstractButton(p), sub(sub), accent(accent) {
-        setText(title); setCheckable(checkable); setCursor(Qt::PointingHandCursor); setMinimumSize(110, 56); setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    }
-    QString sub; QColor accent;
+    struct Item { QString label, sub; QColor accent; bool enabled = true; bool visible = true; };
+    TileStrip(bool checkable, QWidget *p) : QWidget(p), checkable(checkable) { setMouseTracking(true); setFixedHeight(checkable ? 62 : 50); }
+    std::vector<Item> items; int checked = -1; bool controls = false; double delay = 0, reveal = 0; std::function<void(int)> onClick;
+    std::vector<double> hov, press;
+    void setItems(std::vector<Item> v) { items = std::move(v); hov.assign(items.size(), 0); press.assign(items.size(), 0); update(); }
+    void tick(double clock) { reveal = easeOut((clock - delay) / 0.38); for (size_t i = 0; i < items.size(); ++i) { hov[i] += (((int) i == hot ? 1 : 0) - hov[i]) * 0.25; press[i] *= 0.8; } update(); }
 protected:
-    void nextCheckState() override {}                               // state is driven by the real hardware value, never by the click itself
-    void enterEvent(QEnterEvent *) override { hover = true; update(); }
-    void leaveEvent(QEvent *) override { hover = false; update(); }
-    void paintEvent(QPaintEvent *) override {
-        QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
-        QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1); bool on = isChecked();
-        QLinearGradient g(r.topLeft(), r.bottomRight());
-        QColor a = accent; a.setAlpha(on ? 70 : (hover ? 34 : 14)); g.setColorAt(0, a); g.setColorAt(1, QColor(13, 19, 33));
-        if (on) { for (int i = 3; i >= 1; --i) { QColor gl = accent; gl.setAlpha(18 * (4 - i)); p.setPen(QPen(gl, i * 3)); p.setBrush(Qt::NoBrush); p.drawRoundedRect(r, 12, 12); } }
-        p.setPen(QPen(on ? accent : (hover ? accent.darker(140) : kEdge), on ? 1.8 : 1.2)); p.setBrush(g); p.drawRoundedRect(r, 12, 12);
-        p.setPen(isEnabled() ? (on ? accent.lighter(130) : kText) : kDim);
-        QFont f = font(); f.setPixelSize(14); f.setBold(true); p.setFont(f);
-        p.drawText(QRectF(14, 8, width() - 28, 22), Qt::AlignLeft | Qt::AlignVCenter, text());
-        QFont s = font(); s.setPixelSize(11); p.setFont(s); p.setPen(kDim);
-        p.drawText(QRectF(14, 30, width() - 28, 18), Qt::AlignLeft | Qt::AlignVCenter, sub);
-        if (on) { p.setPen(Qt::NoPen); p.setBrush(accent); p.drawEllipse(QPointF(width() - 16, 18), 4, 4); }
+    int hot = -1; bool checkable;
+    int visibleCount() const { int n = 0; for (auto &i : items) n += i.visible; return n; }
+    QRectF rectOf(int idx) const {
+        int n = visibleCount(), k = 0; if (!n) return {}; double gap = 8, w = (width() - gap * (n - 1)) / n;
+        for (int i = 0; i < (int) items.size(); ++i) { if (!items[i].visible) continue; if (i == idx) return QRectF(k * (w + gap), 0, w, height()); ++k; }
+        return {};
     }
-private:
-    bool hover = false;
+    int hit(QPointF pt) const { for (int i = 0; i < (int) items.size(); ++i) if (items[i].visible && rectOf(i).contains(pt)) return i; return -1; }
+    void mouseMoveEvent(QMouseEvent *e) override { hot = hit(e->position()); setCursor(hot >= 0 && controls && items[hot].enabled ? Qt::PointingHandCursor : Qt::ArrowCursor); }
+    void leaveEvent(QEvent *) override { hot = -1; }
+    void mousePressEvent(QMouseEvent *e) override { int i = hit(e->position()); if (i >= 0 && controls && items[i].enabled) { press[i] = 1; if (onClick) onClick(i); } }
+    void paintEvent(QPaintEvent *) override {
+        if (reveal <= 0.001) return;
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setOpacity(reveal); p.translate(0, (1 - reveal) * 14);
+        for (int i = 0; i < (int) items.size(); ++i) {
+            if (!items[i].visible) continue; const Item &it = items[i]; bool on = checkable && i == checked;
+            QRectF r = rectOf(i).adjusted(1, 1, -1, -1); double s = 1 - 0.03 * press[i]; r = QRectF(r.center().x() - r.width() / 2 * s, r.center().y() - r.height() / 2 * s, r.width() * s, r.height() * s);
+            QColor ac = checkable ? it.accent : gAccent; QPainterPath path = chamfer(r, checkable ? 11 : 8);
+            p.setPen(QPen(on ? ac : mix(kLine, alpha(ac, 0.9), hov[i]), 1)); p.setBrush(on ? ac : alpha(ac, 0.06 * hov[i])); p.drawPath(path);
+            QColor tc = !it.enabled ? alpha(kDim, 0.5) : on ? kBg : kText;
+            p.setFont(fnt(RAJ, checkable ? 21 : 17, QFont::Bold, 1.5)); p.setPen(tc); p.drawText(QRectF(r.left() + 14, r.top() + (checkable ? 7 : 5), r.width() - 28, 24), Qt::AlignLeft | Qt::AlignVCenter, it.label.toUpper());
+            p.setFont(fnt(MONO, 10, QFont::Normal, 0)); p.setPen(on ? alpha(kBg, 0.7) : kDim); p.drawText(QRectF(r.left() + 14, r.top() + (checkable ? 32 : 26), r.width() - 28, 16), Qt::AlignLeft | Qt::AlignVCenter, it.sub);
+            if (checkable) { p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(on ? alpha(kBg, 0.8) : alpha(kDim, 0.7)); p.drawText(QRectF(r.right() - 38, r.top() + 8, 28, 14), Qt::AlignRight, QString("M%1").arg(i + 1)); }
+        }
+    }
+};
+
+// ───────────────────────────── header + problem banner ─────────────────────────────
+class HeaderBar : public QWidget {
+public:
+    HeaderBar(QWidget *p) : QWidget(p) { setFixedHeight(66); }
+    QString title, sub, left, right; bool leftOk = true, rightOk = true; double reveal = 0, delay = 0;
+    void tick(double clock) { reveal = easeOut((clock - delay) / 0.4); update(); }
+protected:
+    void paintEvent(QPaintEvent *) override {
+        if (reveal <= 0.001) return; QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setOpacity(reveal);
+        p.setPen(Qt::NoPen); p.setBrush(gAccent); p.drawRect(QRectF(0, 8, 5, 38));
+        p.setFont(fnt(RAJ, 34, QFont::Bold, 3)); p.setPen(kText); p.drawText(QRectF(16, 0, width() - 300, 40), Qt::AlignLeft | Qt::AlignVCenter, title);
+        p.setFont(fnt(MONO, 10, QFont::Normal, 0.5)); p.setPen(kDim); p.drawText(QRectF(17, 38, width() - 300, 14), Qt::AlignLeft | Qt::AlignVCenter, sub);
+        p.setFont(fnt(MONO, 11, QFont::Medium, 1)); double x = width();
+        for (auto *s : {&right, &left}) {
+            if (s->isEmpty()) continue; double w = QFontMetricsF(p.font()).horizontalAdvance(*s) + 26; x -= w;
+            bool ok = (s == &right) ? rightOk : leftOk; p.setPen(Qt::NoPen); p.setBrush(ok ? kText : gAccent); p.drawRect(QRectF(x, 25, 7, 7));
+            p.setPen(kText); p.drawText(QRectF(x + 16, 16, w, 24), Qt::AlignLeft | Qt::AlignVCenter, *s); x -= 14;
+        }
+        if (gBoost) {                                                  // hazard strip while Cooler Boost is on
+            QRectF h(0, height() - 8, width(), 6); p.setClipRect(h); p.setPen(Qt::NoPen); p.setBrush(gAccent); p.drawRect(h);
+            p.setBrush(kBg); double off = fmod(gClock * 24, 22);
+            for (double sx = -22 + off; sx < width() + 22; sx += 22) { QPolygonF q; q << QPointF(sx, h.bottom()) << QPointF(sx + 6, h.top()) << QPointF(sx + 17, h.top()) << QPointF(sx + 11, h.bottom()); p.drawPolygon(q); }
+        } else { p.setPen(QPen(kLine, 1)); p.drawLine(QPointF(0, height() - 4), QPointF(width(), height() - 4)); }
+    }
+};
+
+class BannerBar : public QWidget {
+public:
+    BannerBar(QWidget *p) : QWidget(p) { setFixedHeight(54); hide(); setMouseTracking(true); }
+    QString text, button; std::function<void()> onClick; QRectF btn;
+protected:
+    void mousePressEvent(QMouseEvent *e) override { if (btn.contains(e->position()) && onClick) onClick(); }
+    void mouseMoveEvent(QMouseEvent *e) override { setCursor(btn.contains(e->position()) ? Qt::PointingHandCursor : Qt::ArrowCursor); }
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing); QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
+        p.setPen(QPen(gAccent, 1)); p.setBrush(alpha(gAccent, 0.10)); p.drawPath(chamfer(r, 11));
+        p.setFont(fnt(RAJ, 17, QFont::DemiBold, 1)); p.setPen(kText); p.drawText(QRectF(18, 0, width() - 240, height()), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, text);
+        if (!button.isEmpty()) {
+            btn = QRectF(width() - 200, 11, 184, 32); p.setPen(Qt::NoPen); p.setBrush(gAccent); p.drawPath(chamfer(btn, 8));
+            p.setFont(fnt(RAJ, 16, QFont::Bold, 2)); p.setPen(kBg); p.drawText(btn, Qt::AlignCenter, button.toUpper());
+        } else btn = QRectF();
+    }
 };
 
 // ───────────────────────────── page ─────────────────────────────
-static QLabel *mkLabel(const QString &t, const QString &obj, QWidget *p) { auto *l = new QLabel(t, p); l->setObjectName(obj); return l; }
-
 DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     setObjectName("dashboard");
+    static bool fontsLoaded = false;
+    if (!fontsLoaded) { fontsLoaded = true; for (const char *f : {"Rajdhani-Medium", "Rajdhani-SemiBold", "Rajdhani-Bold", "IBMPlexMono-Regular", "IBMPlexMono-Medium"}) QFontDatabase::addApplicationFont(QString(":/fonts/%1.ttf").arg(f)); }
     for (const QString &n : QDir("/sys/class/power_supply").entryList({"BAT*"}, QDir::Dirs)) { batPath = "/sys/class/power_supply/" + n; break; }
-    QString model = readFile("/sys/class/dmi/id/product_name"), board = readFile("/sys/class/dmi/id/board_name"), fw = readFile("/sys/devices/platform/msi-ec/fw_version");
 
-    auto *root = new QVBoxLayout(this); root->setContentsMargins(14, 10, 14, 12); root->setSpacing(10);
+    auto *root = new QVBoxLayout(this); root->setContentsMargins(18, 12, 18, 14); root->setSpacing(10);
+    header = new HeaderBar(this); root->addWidget(header);
+    banner = new BannerBar(this); root->addWidget(banner);
+    banner->onClick = [this] { emit fixRequested(); };
 
-    auto *head = new QHBoxLayout; auto *tv = new QVBoxLayout; tv->setSpacing(0);
-    QString title = model.isEmpty() ? "MSI LAPTOP" : model.left(model.indexOf(" D2")).toUpper();
-    tv->addWidget(mkLabel(title, "dashTitle", this));
-    subtitle = mkLabel(QString("%1  ·  EC %2").arg(board, fw.isEmpty() ? "n/a" : fw), "dashSub", this); tv->addWidget(subtitle);
-    head->addLayout(tv); head->addStretch();
-    chipPower = mkLabel("", "chip", this); chipGpu = mkLabel("", "chip", this);
-    head->addWidget(chipGpu); head->addSpacing(8); head->addWidget(chipPower);
-    root->addLayout(head);
+    thermal = new ThermalPanel(this); fans = new FanPanel(this); power = new PowerPanel(this); graph = new GraphPanel(this);
+    auto *row1 = new QHBoxLayout; row1->setSpacing(10); row1->addWidget(thermal, 5); row1->addWidget(fans, 3); row1->addWidget(power, 4); root->addLayout(row1, 5);
+    root->addWidget(graph, 3);
+    modes = new TileStrip(true, this); presets = new TileStrip(false, this);
+    root->addWidget(modes); root->addWidget(presets);
+    header->delay = 0; thermal->delay = 0.08; fans->delay = 0.16; power->delay = 0.24; graph->delay = 0.34; modes->delay = 0.44; presets->delay = 0.52;
 
-    auto *row1 = new QHBoxLayout; row1->setSpacing(10);
-    cpuGauge = new ArcGauge("CPU", this); cpuGauge->sub = "Core Ultra 7 255HX";
-    gpuGauge = new ArcGauge("GPU", this); gpuGauge->sub = "RTX 5060 Laptop";
-    cpuFan = new FanDial("CPU FAN", this); gpuFan = new FanDial("GPU FAN", this); battery = new BatteryRing(this);
-    for (QWidget *w : {(QWidget *) cpuGauge, (QWidget *) gpuGauge, (QWidget *) cpuFan, (QWidget *) gpuFan, (QWidget *) battery}) row1->addWidget(w, 1);
-    root->addLayout(row1, 3);
+    modes->setItems({{"Turbo", "max performance", kAccentMode[0]}, {"Balanced", "comfort", kAccentMode[1]}, {"Silent", "quiet fans", kAccentMode[2]}, {"Eco", "lowest power", kAccentMode[3]}});
+    modes->onClick = [this](int i) { modes->checked = i; cur.mode = i; retargetAccent(); emit modeRequested(i); };
+    presets->setItems({{"Gaming", "turbo + cooler boost", kText}, {"Work", "balanced, fans auto", kText}, {"Night", "silent, fans auto", kText}, {"Travel", "eco + 80% charge cap", kText}});
+    presets->onClick = [this](int i) { applyPreset(i); };
+    fans->onBoost = [this](bool on) { fans->boost = on; gBoost = on; emit coolerBoostRequested(on); };
+    power->onLimit = [this](int v) { power->limit = v; emit chargeLimitRequested(v); };
 
-    auto *row2 = new QHBoxLayout; row2->setSpacing(10);
-    graph = new HistoryGraph(this); row2->addWidget(graph, 3);
-    auto *stats = new QFrame(this); stats->setObjectName("card"); auto *sg = new QGridLayout(stats); sg->setContentsMargins(16, 12, 16, 12); sg->setVerticalSpacing(5);
-    struct S { const char *k; QLabel **v; } rows[] = {{"CPU load", &statLoad}, {"CPU clock", &statFreq}, {"Memory", &statRam}, {"NVMe", &statNvme}, {"Battery draw", &statDraw}, {"Time left", &statEta}, {"Battery health", &statHealth}, {"Cycles", &statCycles}};
-    int ri = 0; for (auto &s : rows) { sg->addWidget(mkLabel(s.k, "statKey", stats), ri, 0); *s.v = mkLabel("—", "statVal", stats); (*s.v)->setAlignment(Qt::AlignRight); sg->addWidget(*s.v, ri, 1); ++ri; }
-    row2->addWidget(stats, 2); root->addLayout(row2, 2);
-
-    // controls
-    auto *ctl = new QGridLayout; ctl->setHorizontalSpacing(8); ctl->setVerticalSpacing(6);
-    ctl->addWidget(mkLabel("POWER MODE", "section", this), 0, 0, 1, 4); ctl->addWidget(mkLabel("COOLING", "section", this), 0, 4); ctl->addWidget(mkLabel("CHARGE LIMIT", "section", this), 0, 5, 1, 3);
-    const char *mt[4] = {"Turbo", "Balanced", "Silent", "Super Battery"}, *ms[4] = {"max performance", "comfort", "quiet fans", "lowest power"};
-    QColor mc[4] = {kMagenta, kCyan, kViolet, kGreen};
-    for (int i = 0; i < 4; ++i) {
-        tiles[i] = new ModeTile(mt[i], ms[i], mc[i], this); ctl->addWidget(tiles[i], 1, i);
-        connect(tiles[i], &QAbstractButton::clicked, this, [this, i] { for (int j = 0; j < 4; ++j) tiles[j]->setChecked(j == i); emit modeRequested(i); });
-    }
-    boostBtn = new ModeTile("Cooler Boost", "fans to maximum", kAmber, this); ctl->addWidget(boostBtn, 1, 4);
-    connect(boostBtn, &QAbstractButton::clicked, this, [this] { bool on = !boostBtn->isChecked(); boostBtn->setChecked(on); emit coolerBoostRequested(on); });
-    const int lv[3] = {60, 80, 100}; const char *ln[3] = {"Best battery", "Balanced", "Full"};
-    for (int i = 0; i < 3; ++i) {
-        limitBtns[i] = new ModeTile(QString("%1 %").arg(lv[i]), ln[i], kGreen, this); ctl->addWidget(limitBtns[i], 1, 5 + i);
-        connect(limitBtns[i], &QAbstractButton::clicked, this, [this, i, lv] { for (int j = 0; j < 3; ++j) limitBtns[j]->setChecked(j == i); emit chargeLimitRequested(lv[i]); });
-    }
-    auto *pre = new QGridLayout; pre->setHorizontalSpacing(8); pre->addWidget(mkLabel("ONE-TOUCH PRESETS", "section", this), 0, 0, 1, 4);
-    struct P { const char *n, *s; QColor c; } ps[] = {{"Gaming", "Turbo mode + Cooler Boost", kMagenta}, {"Work", "Balanced, fans on auto", kCyan}, {"Night", "Silent, fans on auto", kViolet}, {"Travel", "Super Battery, 80 % charge cap", kGreen}};
-    for (int i = 0; i < 4; ++i) {
-        auto *t = new ModeTile(ps[i].n, ps[i].s, ps[i].c, this, false); pre->addWidget(t, 1, i);
-        connect(t, &QAbstractButton::clicked, this, [this, n = QString(ps[i].n)] { applyPreset(n); });
-    }
-    root->addLayout(ctl, 0); root->addLayout(pre, 0);
-
-    connect(&fastTimer, &QTimer::timeout, this, &DashboardPage::animate); fastTimer.setInterval(40);
+    connect(&fastTimer, &QTimer::timeout, this, &DashboardPage::animate); fastTimer.setInterval(33);
     connect(&slowTimer, &QTimer::timeout, this, &DashboardPage::sample); slowTimer.setInterval(1000);
     setControlsEnabled(false);
 }
 
-void DashboardPage::setControlsEnabled(bool en) {
-    controlsEnabled = en;
-    for (auto *t : findChildren<QAbstractButton *>()) t->setEnabled(en);
+void DashboardPage::setCaps(const Caps &c) {
+    caps = c;
+    header->title = (c.model.isEmpty() ? QString("MSI LAPTOP") : c.model.left(c.model.indexOf(" D2") > 0 ? c.model.indexOf(" D2") : c.model.size())).toUpper();
+    header->sub = QString("%1  ·  EC %2").arg(c.board.isEmpty() ? "—" : c.board, c.fw.isEmpty() ? "n/a" : c.fw);
+    thermal->hasGpu = c.gpuTemp; thermal->cpuName = c.cpuName; thermal->gpuName = c.gpuName; graph->hasGpu = c.gpuTemp;
+    fans->two = c.fan2; fans->boostOk = c.coolerBoost; power->limitOk = c.chargeLimit;
+    for (int i = 0; i < 4; ++i) modes->items[i].visible = c.modeOk[i];
+    modes->update(); header->update();
 }
 
-void DashboardPage::showEvent(QShowEvent *) { fastTimer.start(); slowTimer.start(); sample(); }
-void DashboardPage::hideEvent(QHideEvent *) { fastTimer.stop(); slowTimer.stop(); }   // hidden in the tray = zero CPU for the animation
+void DashboardPage::setProblem(const QString &text, const QString &button) { banner->text = text; banner->button = button; banner->setVisible(!text.isEmpty()); banner->update(); }
 
-void DashboardPage::applyPreset(const QString &n) {
+void DashboardPage::setControlsEnabled(bool en) { controlsEnabled = en; modes->controls = en; presets->controls = en; for (auto &i : modes->items) i.enabled = en; for (auto &i : presets->items) i.enabled = en; }
+
+void DashboardPage::showEvent(QShowEvent *) { sinceShow.start(); fastTimer.start(); slowTimer.start(); sample(); }   // restarts the entrance animation each time the window opens
+void DashboardPage::hideEvent(QHideEvent *) { fastTimer.stop(); slowTimer.stop(); }                               // hidden in the tray = zero CPU
+
+void DashboardPage::retargetAccent() { gAccentTarget = cur.mode >= 0 ? kAccentMode[cur.mode] : kAccentMode[1]; }
+
+void DashboardPage::applyPreset(int idx) {
     int mode = 1; bool boost = false; int limit = -1;
-    if (n == "Gaming") { mode = 0; boost = true; } else if (n == "Night") mode = 2; else if (n == "Travel") { mode = 3; limit = 80; }
-    for (int j = 0; j < 4; ++j) tiles[j]->setChecked(j == mode);
-    emit modeRequested(mode);
-    if (boost != cur.coolerBoost) { boostBtn->setChecked(boost); emit coolerBoostRequested(boost); }
-    if (limit > 0) { for (int j = 0; j < 3; ++j) limitBtns[j]->setChecked(j == 1); emit chargeLimitRequested(limit); }
+    if (idx == 0) { mode = 0; boost = true; } else if (idx == 2) mode = 2; else if (idx == 3) { mode = 3; limit = 80; }
+    if (!caps.modeOk[mode]) mode = 1;
+    modes->checked = mode; cur.mode = mode; retargetAccent(); emit modeRequested(mode);
+    if (caps.coolerBoost && boost != cur.coolerBoost) { fans->boost = boost; gBoost = boost; cur.coolerBoost = boost; emit coolerBoostRequested(boost); }
+    if (limit > 0 && caps.chargeLimit) { power->limit = limit; emit chargeLimitRequested(limit); }
 }
 
 void DashboardPage::setData(const DashData &d) {
     cur = d;
-    cpuGauge->set(d.cpuTemp);
-    gpuGauge->set(qMax(d.gpuTemp, 0), d.gpuTemp == 0, d.gpuTemp < 0); gpuGauge->sub = d.gpuTemp == 0 ? "dGPU asleep (D3cold)" : "RTX 5060 Laptop";
-    cpuFan->set(d.cpuFanPct, d.cpuFanRpm); gpuFan->set(d.gpuFanPct, d.gpuFanRpm);
-    for (int i = 0; i < 4; ++i) tiles[i]->setChecked(i == d.mode);
-    boostBtn->setChecked(d.coolerBoost);
-    int idx = d.chargeLimit <= 60 ? 0 : d.chargeLimit <= 80 ? 1 : 2; for (int j = 0; j < 3; ++j) limitBtns[j]->setChecked(j == idx);
-    battery->limit = d.chargeLimit;
+    thermal->cpu = d.cpuTemp; thermal->gpu = qMax(d.gpuTemp, 0); thermal->gpuOff = d.gpuTemp == 0;
+    fans->pct[0] = d.cpuFanPct; fans->pct[1] = d.gpuFanPct; fans->rpm[0] = d.cpuFanRpm; fans->rpm[1] = d.gpuFanRpm; fans->boost = d.coolerBoost; gBoost = d.coolerBoost;
+    modes->checked = d.mode; power->limit = d.chargeLimit; retargetAccent();
 }
 
 void DashboardPage::animate() {
-    cpuGauge->step(); gpuGauge->step(); cpuFan->step(); gpuFan->step(); battery->step();
+    gClock = sinceShow.elapsed() / 1000.0;
+    gAccent = mix(gAccent, gAccentTarget, 0.14);                     // accent cross-fades when the mode changes
+    for (Panel *p : std::initializer_list<Panel *>{thermal, fans, power, graph}) p->tick(gClock);
+    header->tick(gClock); modes->tick(gClock); presets->tick(gClock);
+    thermal->step(); fans->step(); power->step();
 }
 
 void DashboardPage::sample() {
-    // battery
     double watts = 0, hours = 0; QString status = readFile(batPath + "/status");
     int cap = int(readInt(batPath + "/capacity", 0));
-    double v = readInt(batPath + "/voltage_now", 0) / 1e6, i = qAbs(double(readInt(batPath + "/current_now", 0))) / 1e6; watts = v * i;
-    double now = readInt(batPath + "/charge_now", 0), full = readInt(batPath + "/charge_full", 0), design = readInt(batPath + "/charge_full_design", 0), cur_ua = qAbs(double(readInt(batPath + "/current_now", 0)));
+    double v = readInt(batPath + "/voltage_now", 0) / 1e6, curA = qAbs(double(readInt(batPath + "/current_now", 0))); watts = v * curA / 1e6;
+    double now = readInt(batPath + "/charge_now", 0), full = readInt(batPath + "/charge_full", 0), design = readInt(batPath + "/charge_full_design", 0);
     bool charging = status == "Charging", dis = status == "Discharging";
-    if (cur_ua > 1000) hours = dis ? now / cur_ua : charging ? (full - now) / cur_ua : 0;
-    battery->cap = cap; battery->charging = charging;
-    battery->line1 = charging ? "CHARGING" : dis ? "ON BATTERY" : status == "Full" ? "FULL" : status == "Not charging" ? "LIMIT REACHED" : status.toUpper();
-    battery->line2 = !fmtEta(hours).isEmpty() ? (dis ? fmtEta(hours) + " left" : fmtEta(hours) + " to charge") : QString("limit %1 %").arg(cur.chargeLimit);
-    statDraw->setText(dis || charging ? QString("%1 W %2").arg(watts, 0, 'f', 1).arg(charging ? "in" : "out") : "idle");
-    statEta->setText(fmtEta(hours).isEmpty() ? "—" : fmtEta(hours));
-    statHealth->setText(design > 0 ? QString("%1 %  (%2 / %3 Wh)").arg(int(100.0 * full / design + 0.5)).arg(full * v / 1e6 * 1.0 / 1.0, 0, 'f', 0).arg(design * v / 1e6, 0, 'f', 0) : "—");
-    statCycles->setText(readInt(batPath + "/cycle_count", 0) > 0 ? QString::number(readInt(batPath + "/cycle_count")) : "not reported");
-    bool ac = readInt("/sys/class/power_supply/ADP1/online", 0) == 1;
-    chipPower->setText(ac ? "● AC POWER" : "● BATTERY"); chipPower->setProperty("tone", ac ? "ok" : "warn");
-
-    // cpu load + clock
-    QStringList st = readFile("/proc/stat").section('\n', 0, 0).split(' ', Qt::SkipEmptyParts);
-    if (st.size() > 8) {
-        quint64 tot = 0; for (int k = 1; k <= 8; ++k) tot += st[k].toULongLong(); quint64 idle = st[4].toULongLong() + st[5].toULongLong();
-        if (lastTotal) statLoad->setText(QString("%1 %").arg(int(100.0 * (1.0 - double(idle - lastIdle) / double(qMax<quint64>(tot - lastTotal, 1))) + 0.5)));
-        lastTotal = tot; lastIdle = idle;
-    }
-    double fsum = 0; int fn = 0; for (const QString &c : QDir("/sys/devices/system/cpu").entryList({"cpu[0-9]*"}, QDir::Dirs)) { qint64 f = readInt("/sys/devices/system/cpu/" + c + "/cpufreq/scaling_cur_freq"); if (f > 0) { fsum += f; ++fn; } }
-    statFreq->setText(fn ? QString("%1 GHz avg").arg(fsum / fn / 1e6, 0, 'f', 2) : "—");
-    QString mi = readFile("/proc/meminfo"); auto kb = [&](const char *k) { int a = mi.indexOf(QString(k) + ":"); return a < 0 ? 0.0 : mi.mid(a + QString(k).size() + 1, 20).trimmed().section(' ', 0, 0).toDouble(); };
-    double mt = kb("MemTotal"), ma = kb("MemAvailable"); statRam->setText(mt > 0 ? QString("%1 / %2 GB").arg((mt - ma) / 1048576, 0, 'f', 1).arg(mt / 1048576, 0, 'f', 1) : "—");
-    int nv = -1; for (const QString &h : QDir("/sys/class/hwmon").entryList({"hwmon*"}, QDir::Dirs)) if (readFile("/sys/class/hwmon/" + h + "/name") == "nvme") { nv = int(readInt("/sys/class/hwmon/" + h + "/temp1_input") / 1000); break; }
-    statNvme->setText(nv > 0 ? QString("%1 °C").arg(nv) : "—");
+    if (curA > 1000) hours = dis ? now / curA : charging ? (full - now) / curA : 0;
+    power->cap = cap; power->charging = charging; power->ac = readInt("/sys/class/power_supply/ADP1/online", 0) == 1 || charging;
+    power->state = charging ? "CHARGING" : dis ? "DISCHARGING" : status == "Full" ? "FULL" : status == "Not charging" ? "HOLDING AT LIMIT" : status.toUpper();
+    power->draw = (dis || charging) ? QString("%1 W %2").arg(watts, 0, 'f', 1).arg(charging ? "in" : "out") : "idle";
+    power->eta = fmtEta(hours).isEmpty() ? QString() : fmtEta(hours) + (dis ? " left" : " to full");
+    power->health = design > 0 ? QString("%1 %  ·  %2 / %3 Wh").arg(int(100.0 * full / design + 0.5)).arg(full * v / 1e6, 0, 'f', 0).arg(design * v / 1e6, 0, 'f', 0) : QString();
+    qint64 cyc = readInt(batPath + "/cycle_count", 0); power->cycles = cyc > 0 ? QString::number(cyc) : QStringLiteral("not reported");
+    header->left = power->ac ? "AC POWER" : "BATTERY"; header->leftOk = power->ac;
     QString dg = readFile("/sys/bus/pci/devices/0000:01:00.0/power_state");
-    chipGpu->setText(dg.isEmpty() ? "● dGPU n/a" : dg.startsWith("D3") ? "● dGPU ASLEEP" : "● dGPU ACTIVE"); chipGpu->setProperty("tone", dg.startsWith("D3") ? "ok" : "warn");
-    for (QLabel *c : {chipPower, chipGpu}) { c->style()->unpolish(c); c->style()->polish(c); }
+    if (caps.gpuTemp && !dg.isEmpty()) { header->right = dg.startsWith("D3") ? "dGPU ASLEEP" : "dGPU ACTIVE"; header->rightOk = dg.startsWith("D3"); } else header->right.clear();
 
+    int nv = -1; for (const QString &h : QDir("/sys/class/hwmon").entryList({"hwmon*"}, QDir::Dirs)) if (readFile("/sys/class/hwmon/" + h + "/name") == "nvme") { nv = int(readInt("/sys/class/hwmon/" + h + "/temp1_input") / 1000); break; }
+    thermal->hasNvme = nv > 0; thermal->nvme = nv;
+    thermal->cpuPeak = qMax<double>(cur.cpuTemp, thermal->cpuPeak - 0.6); thermal->gpuPeak = qMax<double>(cur.gpuTemp, thermal->gpuPeak - 0.6);
     graph->push(cur.cpuTemp > 0 ? cur.cpuTemp : -1, cur.gpuTemp > 0 ? cur.gpuTemp : -1, dis ? watts : 0);
+
+    // header sub-line: load / clock / ram (cheap, once a second)
+    QStringList st = readFile("/proc/stat").section('\n', 0, 0).split(' ', Qt::SkipEmptyParts); QString load;
+    if (st.size() > 8) { quint64 tot = 0; for (int k = 1; k <= 8; ++k) tot += st[k].toULongLong(); quint64 idle = st[4].toULongLong() + st[5].toULongLong(); if (lastTotal) load = QString("%1%").arg(int(100.0 * (1.0 - double(idle - lastIdle) / double(qMax<quint64>(tot - lastTotal, 1))) + 0.5)); lastTotal = tot; lastIdle = idle; }
+    double fsum = 0; int fn = 0; for (const QString &c : QDir("/sys/devices/system/cpu").entryList({"cpu[0-9]*"}, QDir::Dirs)) { qint64 f = readInt("/sys/devices/system/cpu/" + c + "/cpufreq/scaling_cur_freq"); if (f > 0) { fsum += f; ++fn; } }
+    QString mi = readFile("/proc/meminfo"); auto kb = [&](const char *k) { int a = mi.indexOf(QString(k) + ":"); return a < 0 ? 0.0 : mi.mid(a + QString(k).size() + 1, 20).trimmed().section(' ', 0, 0).toDouble(); };
+    double mt = kb("MemTotal"), ma = kb("MemAvailable");
+    QString extra = QString("CPU %1 · %2 GHz · RAM %3/%4 GB").arg(load.isEmpty() ? "—" : load).arg(fn ? fsum / fn / 1e6 : 0, 0, 'f', 1).arg((mt - ma) / 1048576, 0, 'f', 1).arg(mt / 1048576, 0, 'f', 0);
+    header->sub = QString("%1  ·  EC %2  ·  %3").arg(caps.board.isEmpty() ? "—" : caps.board, caps.fw.isEmpty() ? "n/a" : caps.fw, extra);
 }

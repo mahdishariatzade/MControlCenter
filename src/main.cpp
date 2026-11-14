@@ -18,6 +18,7 @@
 
 #include "mainwindow.h"
 #include <QApplication>
+#include <QFontDatabase>
 #include <QTranslator>
 #include <QDBusConnectionInterface>
 
@@ -36,6 +37,8 @@ int main(int argc, char *argv[]) {
     }
 
     QApplication a(argc, argv);
+    for (const char *f : {"Rajdhani-Medium", "Rajdhani-SemiBold", "Rajdhani-Bold", "IBMPlexMono-Regular", "IBMPlexMono-Medium"})
+        QFontDatabase::addApplicationFont(QString(":/fonts/%1.ttf").arg(f));
 
     QTranslator translator;
     const QStringList uiLanguages = QLocale::system().uiLanguages();
