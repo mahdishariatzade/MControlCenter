@@ -41,7 +41,7 @@ protected:
     void mousePressEvent(QMouseEvent *e) override; void mouseMoveEvent(QMouseEvent *e) override; void mouseReleaseEvent(QMouseEvent *) override;
 private:
     QRectF keyRect(int i) const; int keyAt(QPointF pt) const; void finishCalibration(); void gotoStep(int s);
-    QRectF area, bAll, bZones, bCal, bBack, bNext, bCancel; double scale = 1; QPointF origin; int hotKey = -1, drag = -1;
+    QRectF area, bAll, bZones, bCal, bBack, bNext, bCancel, bFinish, chips[24]; double scale = 1; QPointF origin; int hotKey = -1, drag = -1;
     bool calib = false; int step = 0; QVector<QSet<int>> marked;
 };
 #endif

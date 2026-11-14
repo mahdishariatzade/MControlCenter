@@ -96,7 +96,8 @@ bool MysticLight::blinkZone(int z) {
 bool MysticLight::reloadStored() { return isOpen() && send(QByteArray::fromHex("02b0")); }
 
 // ───────────────────────────── worker ─────────────────────────────
-bool RgbWorker::ensure() { if (dev.isOpen()) return true; bool ok = dev.open(); emit state(ok, dev.zoneCount(), dev.deviceName(), dev.error()); return ok; }
+bool RgbWorker::ensure() { if (qEnvironmentVariableIsSet("MCC_SHOT") || qEnvironmentVariableIsSet("MCC_NO_RGB")) return false;   // dev screenshots must never touch the real keyboard
+    if (dev.isOpen()) return true; bool ok = dev.open(); emit state(ok, dev.zoneCount(), dev.deviceName(), dev.error()); return ok; }
 void RgbWorker::probe() { dev.close(); ensure(); }
 void RgbWorker::apply(const RgbProfile &p) { if (!ensure()) return; if (!dev.apply(p)) { emit state(false, dev.zoneCount(), dev.deviceName(), dev.error()); } }
 void RgbWorker::previewZone(int zone) { if (ensure()) dev.blinkZone(zone); }

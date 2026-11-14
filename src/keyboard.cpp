@@ -75,6 +75,8 @@ void KeyboardMap::mousePressEvent(QMouseEvent *e) {
     const QPointF pt = e->position();
     if (calib) {
         if (bCancel.contains(pt)) { calib = false; if (onCalibEnd) onCalibEnd(); update(); return; }
+        if (bFinish.contains(pt)) { finishCalibration(); return; }
+        for (int z = 0; z < zones; ++z) if (chips[z].contains(pt)) { gotoStep(z); return; }
         if (bBack.contains(pt) && step > 0) { gotoStep(step - 1); return; }
         if (bNext.contains(pt)) { if (step >= zones - 1) finishCalibration(); else gotoStep(step + 1); return; }
         int k = keyAt(pt); if (k >= 0) { if (marked[step].contains(k)) marked[step].remove(k); else { for (auto &s : marked) s.remove(k); marked[step].insert(k); } drag = k; update(); }
@@ -88,7 +90,8 @@ void KeyboardMap::mousePressEvent(QMouseEvent *e) {
 }
 void KeyboardMap::mouseMoveEvent(QMouseEvent *e) {
     int k = keyAt(e->position()); if (k != hotKey) { hotKey = k; update(); }
-    const QPointF pt = e->position(); bool btn = bAll.contains(pt) || bZones.contains(pt) || bCal.contains(pt) || (calib && (bBack.contains(pt) || bNext.contains(pt) || bCancel.contains(pt)));
+    const QPointF pt = e->position(); bool btn = bAll.contains(pt) || bZones.contains(pt) || bCal.contains(pt) || (calib && (bBack.contains(pt) || bNext.contains(pt) || bCancel.contains(pt) || bFinish.contains(pt)));
+    if (calib) for (int z = 0; z < zones; ++z) btn |= chips[z].contains(pt);
     setCursor(btn || k >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
     if (drag >= 0 && k >= 0 && k != drag) {
         if (calib) { if (!marked[step].contains(k)) { for (auto &s : marked) s.remove(k); marked[step].insert(k); update(); } }
@@ -132,10 +135,19 @@ void KeyboardMap::paintBody(QPainter &p, const QRectF &b) {
                    !present ? "No keyboard controller connected." : map.calibrated ? "Click or drag keys to pick zones, then choose a colour. Ctrl+click adds."
                                                                                   : "This map is a guess. Run CALIBRATE KEYBOARD once so the map matches your keyboard (about 2 minutes).");
     } else {
-        p.setPen(gAccent); p.setFont(fnt(RAJ, 17, QFont::Bold, 1.5)); p.drawText(QRectF(b.left(), b.bottom() - 52, b.width() - 330, 22), Qt::AlignLeft | Qt::AlignVCenter, QString("CALIBRATING  ·  ZONE %1 OF %2").arg(step + 1).arg(zones));
-        p.setPen(kDim); p.setFont(fnt(MONO, 10)); p.drawText(QRectF(b.left(), b.bottom() - 30, b.width() - 330, 30), Qt::AlignLeft | Qt::TextWordWrap, "On your real keyboard some keys are blinking red. Click exactly those keys here (drag to add several). If nothing blinks, just press NEXT.");
+        // progress strip: one chip per zone (done / current / empty); click a chip to jump to that zone
+        const double cw = 17, cg = 3; double cx = b.right() - zones * (cw + cg) + cg; int done = 0;
+        for (int z = 0; z < zones; ++z) {
+            chips[z] = QRectF(cx + z * (cw + cg), b.top() - 31, cw, 22); bool cur = z == step, has = !marked[z].isEmpty(); done += has;
+            p.setPen(QPen(cur ? kText : kLine, cur ? 2 : 1)); p.setBrush(has ? QColor(255, 70, 40, 200) : QBrush(Qt::NoBrush)); p.drawRect(chips[z]);
+            p.setFont(fnt(MONO, 8, QFont::Medium)); p.setPen(has ? kText : kDim); p.drawText(chips[z], Qt::AlignCenter, QString::number(z + 1));
+        }
+        p.setPen(gAccent); p.setFont(fnt(RAJ, 17, QFont::Bold, 1.5)); p.drawText(QRectF(b.left(), b.bottom() - 52, b.width() - 480, 22), Qt::AlignLeft | Qt::AlignVCenter, QString("CALIBRATING  ·  ZONE %1 OF %2  ·  %3 DONE").arg(step + 1).arg(zones).arg(done));
+        p.setPen(kDim); p.setFont(fnt(MONO, 10)); p.drawText(QRectF(b.left(), b.bottom() - 30, b.width() - 480, 30), Qt::AlignLeft | Qt::TextWordWrap, "On your keyboard some keys blink red. Click exactly those keys here (drag to add several). Nothing blinking? Press NEXT. You can save any time.");
         QFont f = fnt(RAJ, 14, QFont::Bold, 1.5); p.setFont(f); double x = b.right();
         auto btn = [&](QRectF &r, const QString &t, bool fill, bool en) { double w = QFontMetricsF(f).horizontalAdvance(t) + 24; r = QRectF(x - w, b.bottom() - 40, w, 32); x -= w + 8; p.setPen(QPen(fill ? gAccent : kLine, 1)); p.setBrush(fill ? gAccent : QBrush(Qt::NoBrush)); p.drawPath(chamfer(r, 7)); p.setPen(!en ? alpha(kDim, 0.5) : fill ? kBg : kText); p.drawText(r, Qt::AlignCenter, t); };
-        btn(bNext, step >= zones - 1 ? "FINISH & SAVE" : "NEXT ZONE", true, true); btn(bBack, "BACK", false, step > 0); btn(bCancel, "CANCEL", false, true);
+        btn(bFinish, "SAVE & FINISH", true, true);
+        if (step < zones - 1) btn(bNext, "NEXT ZONE", false, true); else bNext = QRectF();
+        btn(bBack, "BACK", false, step > 0); btn(bCancel, "CANCEL", false, true);
     }
 }

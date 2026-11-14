@@ -75,6 +75,7 @@ public:
     void setProfile(const RgbProfile &p);
     void setFollow(bool mode, bool thermal, bool lowBat, bool lock);
     KeyMap keyMap() const;
+    void debugCalibrate();                             // dev screenshots only
     std::function<void(const RgbProfile &)> onProfile;
     std::function<void(int, bool)> onFollow;           // 0 power mode, 1 thermal flash, 2 low-battery pulse, 3 off on lock
     std::function<void()> onRestoreFirmware, onMapChanged;

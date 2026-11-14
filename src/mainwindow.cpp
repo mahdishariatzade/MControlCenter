@@ -253,6 +253,7 @@ MainWindow::MainWindow(QWidget *parent)
         QTimer::singleShot(2500, this, [this, prefix] {
             for (int i = 0; i < ui->tabWidget->count(); ++i) {
                 if (!ui->tabWidget->isTabVisible(i)) continue; ui->tabWidget->setCurrentIndex(i);
+                if (ui->tabWidget->currentWidget() == lightingPage && qEnvironmentVariableIsSet("MCC_SHOT_CALIB")) lightingPage->debugCalibrate();
                 QEventLoop loop; QTimer::singleShot(1300, &loop, &QEventLoop::quit); loop.exec();            // let the entrance animation finish
                 grab().save(QString("%1_%2.png").arg(prefix).arg(i));
             }

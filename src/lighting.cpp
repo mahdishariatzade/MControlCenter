@@ -122,6 +122,7 @@ protected:
 
 // ───────────────────────────── page ─────────────────────────────
 KeyMap LightingPage::keyMap() const { return kb->map; }
+void LightingPage::debugCalibrate() { kb->present = true; kb->startCalibration(); }
 
 LightingPage::LightingPage(QWidget *p) : AnimPage(p) {
     auto *outer = new QVBoxLayout(this); outer->setContentsMargins(0, 0, 0, 0);
