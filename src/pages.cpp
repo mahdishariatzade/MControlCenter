@@ -207,6 +207,8 @@ FanPage::FanPage(QWidget *p) : AnimPage(p) {
     root->addWidget(head); root->addWidget(curve, 1); adopt(head, 0.0); adopt(curve, 0.12);
     Row sel; sel.type = Row::Segment; sel.opts = {"CPU fan", "GPU fan"}; sel.pick = [this](int i) { fan = i; head->rows[0].sel = i; curve->fan = i; head->update(); curve->update(); }; head->rows.push_back(sel);
     Row adv; adv.type = Row::Switch; adv.label = "Advanced fan control"; adv.sub = "Replace the firmware fan table with your own curve"; adv.click = [this] { if (onAdvanced) onAdvanced(!advanced); }; head->rows.push_back(adv);
+    Row ex; ex.type = Row::Button; ex.label = "Export my fan curve to a file"; ex.click = [this] { if (onExport) onExport(); }; head->rows.push_back(ex);
+    Row im; im.type = Row::Button; im.label = "Import a fan curve from a file"; im.click = [this] { if (onImport) onImport(); }; head->rows.push_back(im);
     Row warn; warn.type = Row::Text; warn.label = "Aggressively low speeds can overheat the laptop. The firmware still protects the CPU, but use judgement."; head->rows.push_back(warn); head->relayout();
     curve->onEdit = [this] { if (onCurveEdited) onCurveEdited(fan, curve->sp[fan], curve->tp[fan]); };
     curve->onApply = [this] { if (onApply) onApply(); }; curve->onReset = [this] { if (onReset) onReset(); };
@@ -214,7 +216,7 @@ FanPage::FanPage(QWidget *p) : AnimPage(p) {
 void FanPage::setCaps(const Caps &c) { two = c.fan2; head->rows[0].visible = c.fan2; if (!c.fan2) { fan = 0; curve->fan = 0; head->rows[0].sel = 0; } head->relayout(); }
 void FanPage::setCurve(int f, const QVector<int> &speeds, const QVector<int> &temps) { if (f < 0 || f > 1) return; if (!curve->dirty || true) { curve->sp[f] = speeds; curve->tp[f] = temps; } curve->update(); }
 void FanPage::setLive(int ct, int cp, int gt, int gp) { curve->liveT[0] = ct; curve->liveP[0] = cp; curve->liveT[1] = gt; curve->liveP[1] = gp; curve->update(); }
-void FanPage::setAdvanced(bool on) { advanced = on; head->rows[1].on = on; curve->enabled = on; head->update(); curve->update(); kick(); }
+void FanPage::setAdvanced(bool on) { advanced = on; head->rows[1].on = on; head->rows[3].enabled = on; head->rows[3].label = on ? "Import a fan curve from a file" : "Import a fan curve (turn on Advanced fan control first)"; curve->enabled = on; head->update(); curve->update(); kick(); }
 void FanPage::setDirty(bool d) { curve->dirty = d; curve->update(); }
 
 // ───────────────────────────── controls ─────────────────────────────

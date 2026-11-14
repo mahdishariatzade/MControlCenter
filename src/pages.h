@@ -72,7 +72,7 @@ public:
     void setLive(int cpuTemp, int cpuPct, int gpuTemp, int gpuPct);
     void setAdvanced(bool on); void setDirty(bool dirty);
     std::function<void(int, const QVector<int> &, const QVector<int> &)> onCurveEdited;   // fan, speeds, temps
-    std::function<void(bool)> onAdvanced; std::function<void()> onApply, onReset;
+    std::function<void(bool)> onAdvanced; std::function<void()> onApply, onReset, onExport, onImport;
 private:
     kit::RowsPanel *head; CurvePanel *curve; int fan = 0; bool two = false, advanced = false;
 };

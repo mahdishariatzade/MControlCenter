@@ -71,6 +71,7 @@ private:
     void exerciseLoad(); void exerciseSave(); void batteryExercise(const Snapshot &s); void exerciseAction(int what, int value); ExerciseView exerciseView() const;
     void buildPages();
     void syncPages(const Snapshot &s);
+    void exportFanCurve(); void importFanCurve();
     void syncFanEditor(); void writeFanToUi(int fan, const QVector<int> &speeds, const QVector<int> &temps);
     void setGpuBootMode(bool on);
     void aboutLink(int which);

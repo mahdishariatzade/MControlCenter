@@ -39,6 +39,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QClipboard>
+#include <QFileDialog>
 #include <QGuiApplication>
 #include <QDBusInterface>
 #include <QSignalBlocker>
@@ -1323,6 +1324,7 @@ void MainWindow::buildPages() {
     exerciseLoad(); batteryPage->setExercise(exerciseView()); historyLoad();
     fanPage->onAdvanced = [this](bool on) { ui->advancedFanControlCheckBox->setChecked(on); fanPage->setAdvanced(on); };
     fanPage->onCurveEdited = [this](int fan, const QVector<int> &sp, const QVector<int> &tp) { writeFanToUi(fan, sp, tp); };
+    fanPage->onExport = [this] { exportFanCurve(); }; fanPage->onImport = [this] { importFanCurve(); };
     fanPage->onApply = [this] { ui->fanSpeedApplyButton->click(); syncFanEditor(); };
     fanPage->onReset = [this] { ui->fanSpeedResetButton->click(); syncFanEditor(); };
     aboutPage->onLink = [this](int w) { aboutLink(w); };
@@ -1363,6 +1365,40 @@ void MainWindow::syncFanEditor() {
         for (int i = 2; i <= 7; ++i) if (auto *sb = findChild<QSpinBox *>(QString("fan%1Speed%2TempSpinBox").arg(fan).arg(i))) tp << sb->value();
         if (sp.size() == 7 && tp.size() == 6) fanPage->setCurve(fan - 1, sp, tp);
     }
+}
+
+// ── fan curve files: plain JSON so curves can be shared (forum posts, GitHub issues). Importing only fills the editor; nothing reaches the EC until Apply. ──
+void MainWindow::exportFanCurve() {
+    QJsonArray fans;
+    for (int fan = 1; fan <= 2; ++fan) {
+        QJsonArray sp, tp;
+        for (int i = 1; i <= 7; ++i) if (auto *sl = findChild<QSlider *>(QString("fan%1Speed%2Slider").arg(fan).arg(i))) sp.append(sl->value());
+        for (int i = 2; i <= 7; ++i) if (auto *sb = findChild<QSpinBox *>(QString("fan%1Speed%2TempSpinBox").arg(fan).arg(i))) tp.append(sb->value());
+        if (sp.size() == 7 && tp.size() == 6) fans.append(QJsonObject{{"speeds", sp}, {"temps", tp}});
+    }
+    if (fans.isEmpty()) return;
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export fan curve"), QDir::homePath() + "/fan-curve-" + lastCaps.board + ".json", tr("Fan curve (*.json)")); if (path.isEmpty()) return;
+    QJsonObject o{{"format", "mcontrolcenter-fan-curve"}, {"version", 1}, {"board", lastCaps.board}, {"model", lastCaps.model}, {"fw", lastCaps.fw}, {"fans", fans}};
+    QFile f(path); if (f.open(QIODevice::WriteOnly)) { f.write(QJsonDocument(o).toJson()); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Fan curve saved to %1").arg(path), QSystemTrayIcon::Information, 5000); }
+}
+void MainWindow::importFanCurve() {
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import fan curve"), QDir::homePath(), tr("Fan curve (*.json)")); if (path.isEmpty()) return;
+    QFile f(path); if (!f.open(QIODevice::ReadOnly) || f.size() > 65536) { QMessageBox::warning(this, tr("Import fan curve"), tr("Could not read that file.")); return; }
+    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object(); const QJsonArray fans = o["fans"].toArray();
+    if (o["format"].toString() != "mcontrolcenter-fan-curve" || fans.isEmpty()) { QMessageBox::warning(this, tr("Import fan curve"), tr("This is not a MControlCenter fan curve file.")); return; }
+    QVector<QVector<int>> sps, tps;                                                          // validate EVERYTHING before touching the editor
+    for (const QJsonValue &v : fans) {
+        const QJsonArray sp = v.toObject()["speeds"].toArray(), tp = v.toObject()["temps"].toArray(); QVector<int> s, t;
+        if (sp.size() != 7 || tp.size() != 6) { QMessageBox::warning(this, tr("Import fan curve"), tr("The curve has the wrong number of points for this app (7 speeds, 6 temperatures).")); return; }
+        for (const QJsonValue &x : sp) { const int n = x.toInt(-1); if (n < 0 || n > 100) { QMessageBox::warning(this, tr("Import fan curve"), tr("A fan speed in the file is outside 0-100 %.")); return; } s << n; }
+        for (const QJsonValue &x : tp) { const int n = x.toInt(-1); if (n < 0 || n > 110 || (!t.isEmpty() && n < t.last())) { QMessageBox::warning(this, tr("Import fan curve"), tr("The temperatures in the file are not in rising order within 0-110 °C.")); return; } t << n; }
+        sps << s; tps << t;
+    }
+    const QString madeFor = o["board"].toString();
+    if (!madeFor.isEmpty() && madeFor != lastCaps.board &&
+        QMessageBox::question(this, tr("Import fan curve"), tr("This curve was made for a different laptop (%1, yours is %2). Fan tables are model specific. Load it into the editor anyway? Nothing is applied until you press Apply.").arg(madeFor, lastCaps.board)) != QMessageBox::Yes) return;
+    for (int i = 0; i < sps.size() && i < 2; ++i) writeFanToUi(i, sps[i], tps[i]);
+    syncFanEditor(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Fan curve loaded into the editor. Review it, then press Apply."), QSystemTrayIcon::Information, 6000);
 }
 
 void MainWindow::writeFanToUi(int fan, const QVector<int> &sp, const QVector<int> &tp) {
