@@ -300,6 +300,7 @@ SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
     { Row x; x.type = Row::Switch; x.label = "Start with my session"; x.sub = "Runs quietly in the system tray after login"; x.click = [this] { if (onChange) onChange(Autostart, startup->rows[0].on ? 0 : 1); }; startup->rows.push_back(x); }
     { Row x; x.type = Row::Switch; x.label = "Thermal alerts"; x.sub = "Notify me when the CPU stays hot for 10 seconds"; x.click = [this] { if (onChange) onChange(ThermalAlert, startup->rows[1].on ? 0 : 1); }; startup->rows.push_back(x); }
     { Row x; x.type = Row::Segment; x.label = "Alert above"; x.opts = {"85 °C", "90 °C", "95 °C"}; x.visible = false; x.pick = [this](int i) { if (onChange) onChange(ThermalLevel, i); }; startup->rows.push_back(x); }
+    { Row x; x.type = Row::Switch; x.label = "Reduce motion"; x.sub = "No entrance or hover animations (calmer, and a little less CPU)"; x.click = [this] { if (onChange) onChange(ReduceMotion, startup->rows[3].on ? 0 : 1); }; startup->rows.push_back(x); }
     { Row x; x.type = Row::Text; x.label = "Launching MControlCenter again from the menu simply raises this window."; startup->rows.push_back(x); }
     startup->relayout();
     { Row x; x.type = Row::Switch; x.label = "Turbo while gaming"; x.sub = "Turbo + Cooler Boost while a game runs (Feral GameMode)"; x.click = [this] { if (onChange) onChange(GameMode, automation->rows[0].on ? 0 : 1); }; automation->rows.push_back(x); }
@@ -312,6 +313,7 @@ SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
     data->relayout();
 }
 void SettingsPage::setAppProfiles(bool on, int n) { auto &R = automation->rows; const QString l = n ? QString("Edit app profiles (%1)").arg(n) : QString("Add an app profile"); if (R[2].on == on && R[3].label == l) return; R[2].on = on; R[3].label = l; automation->relayout(); automation->update(); kick(); }
+void SettingsPage::setReduceMotion(bool on) { auto &R = startup->rows; if (R[3].on == on) return; R[3].on = on; R[3].anim = on ? 1 : 0; startup->update(); kick(); }
 void SettingsPage::setState(bool a, bool t, int ti, bool g, bool avail) {
     bool ch = startup->rows[0].on != a || startup->rows[1].on != t || startup->rows[2].sel != ti || startup->rows[2].visible != t || automation->rows[0].on != g || automation->rows[0].enabled != avail;
     startup->rows[0].on = a; startup->rows[1].on = t; startup->rows[2].sel = ti; startup->rows[2].visible = t; automation->rows[0].on = g; automation->rows[0].enabled = true;

@@ -5,13 +5,15 @@
 #   ./install.sh --no-deps     do not install build dependencies (packagers / already installed)
 #   ./install.sh --no-build    reuse an existing ./build (packagers)
 #   ./install.sh --uninstall   remove the app, helper and doctor (leaves the msi-ec driver alone)
+#   ./install.sh --dry-run     print every system change it WOULD make (files, udev, polkit, systemd, DKMS) and change nothing
 # Tested on Debian-family (Kali). The dnf / pacman / zypper paths are written but not yet tested on real machines.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
-DRIVER=1; UNINSTALL=0; DEPS=1; BUILD=1
-for a in "$@"; do case "$a" in --no-driver) DRIVER=0 ;; --uninstall) UNINSTALL=1 ;; --no-deps) DEPS=0 ;; --no-build) BUILD=0 ;; -h|--help) sed -n 2,6p "$0"; exit 0 ;; esac; done
+DRIVER=1; UNINSTALL=0; DEPS=1; BUILD=1; DRY=0
+for a in "$@"; do case "$a" in --no-driver) DRIVER=0 ;; --uninstall) UNINSTALL=1 ;; --no-deps) DEPS=0 ;; --no-build) BUILD=0 ;; --dry-run) DRY=1 ;; -h|--help) sed -n 2,6p "$0"; exit 0 ;; esac; done
 say() { printf '\033[1;38;5;208m==>\033[0m %s\n' "$*"; }
+[ "$DRY" = 1 ] && { SUDO="echo [dry-run] would run:"; DEPS=0; BUILD=0; DRIVER=0; echo "DRY RUN: nothing will be changed"; }
 . /etc/os-release 2>/dev/null || true
 FAMILY="${ID:-} ${ID_LIKE:-}"
 
@@ -56,13 +58,15 @@ $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.doctor.policy
 $SUDO install -Dm644 packaging/mcontrolcenter-doctor.service /etc/systemd/system/mcontrolcenter-doctor.service
 $SUDO install -Dm644 packaging/70-mcontrolcenter-rgb.rules /etc/udev/rules.d/70-mcontrolcenter-rgb.rules
 $SUDO install -Dm644 packaging/71-mcontrolcenter-ddc.rules /etc/udev/rules.d/71-mcontrolcenter-ddc.rules
-echo i2c-dev | $SUDO tee /etc/modules-load.d/mcontrolcenter-i2c.conf >/dev/null; $SUDO modprobe i2c-dev 2>/dev/null || true   # DDC/CI monitor control needs /dev/i2c-N
+$SUDO sh -c "echo i2c-dev > /etc/modules-load.d/mcontrolcenter-i2c.conf"; $SUDO modprobe i2c-dev 2>/dev/null || true   # DDC/CI monitor control needs /dev/i2c-N
 $SUDO udevadm control --reload-rules 2>/dev/null || true; $SUDO udevadm trigger --subsystem-match=hidraw 2>/dev/null || true; $SUDO udevadm trigger --subsystem-match=i2c-dev 2>/dev/null || true
 $SUDO install -Dm644 packaging/mcontrolcenter-autostart.desktop /etc/xdg/autostart/mcontrolcenter.desktop
 $SUDO systemctl daemon-reload
 $SUDO systemctl reload dbus 2>/dev/null || true
+[ "$DRY" = 1 ] && echo "[dry-run] would run: systemctl enable mcontrolcenter-doctor.service mcontrolcenter-battery.service"
 $SUDO systemctl enable mcontrolcenter-doctor.service mcontrolcenter-battery.service >/dev/null 2>&1 || true   # boot-time self-heal after kernel updates / interrupted calibration
 # automatic battery calibration needs MSI's WMI platform driver: use the kernel's own if present, else register the DKMS copy (built per kernel)
+[ "$DRY" = 1 ] && echo "[dry-run] would also (on an MSI laptop whose kernel lacks msi-wmi-platform): copy packaging/msi-wmi-platform to /usr/src/msi-wmi-platform-1.0 and register it with DKMS; and set up the msi-ec driver via mcontrolcenter-doctor if it is not loaded"
 if grep -qiE 'micro-star|msi' /sys/class/dmi/id/sys_vendor 2>/dev/null && ! modinfo msi-wmi-platform >/dev/null 2>&1 && command -v dkms >/dev/null 2>&1; then
     say "registering the msi-wmi-platform driver (for automatic battery calibration)"
     $SUDO rm -rf /usr/src/msi-wmi-platform-1.0; $SUDO mkdir -p /usr/src/msi-wmi-platform-1.0; $SUDO cp packaging/msi-wmi-platform/* /usr/src/msi-wmi-platform-1.0/

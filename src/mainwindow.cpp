@@ -1288,6 +1288,7 @@ void MainWindow::buildPages() {
     lightingPage->setChosen(rgbChosen); lightingPage->setProfile(rgbUser); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock);
     ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->debugTab));
     settingsPage->onChange = [this](SettingsPage::Item w, int v) { settingChanged(w, v); };
+    { Settings st; kit::gReduceMotion = st.isValueExist("UI/reduceMotion") && st.getValue("UI/reduceMotion").toBool(); }
     appProfiles = new AppProfiles(this); appProfiles->load();
     connect(appProfiles, &AppProfiles::activated, this, [this](AppRule r) {
         if (gameActive) return;                                            // GameMode owns the mode while a game runs
@@ -1414,6 +1415,7 @@ static const int kThermalLevels[3] = {85, 90, 95};
 void MainWindow::syncSettingsPage() {
     Settings s; settingsPage->setState(autostartEnabled(), s.getValue("Settings/thermalAlert").toBool(), qBound(0, s.getValue("Settings/thermalLevel").toInt(), 2),
                                        s.getValue("Settings/gameMode").toBool(), !QStandardPaths::findExecutable("gamemoded").isEmpty());
+    settingsPage->setReduceMotion(kit::gReduceMotion);
     if (appProfiles) settingsPage->setAppProfiles(appProfiles->enabled, appProfiles->rules.size());
 }
 
@@ -1424,6 +1426,7 @@ void MainWindow::settingChanged(SettingsPage::Item what, int value) {
         case SettingsPage::ThermalAlert: Settings::setValue("Settings/thermalAlert", value != 0); hotSince = 0; break;
         case SettingsPage::ThermalLevel: Settings::setValue("Settings/thermalLevel", value); break;
         case SettingsPage::GameMode: { bool on = value != 0; Settings::setValue("Settings/gameMode", on); if (on) gameTimer.start(); else { gameTimer.stop(); if (gameActive) { gameActive = false; if (gameSavedMode >= 0) setModeIndex(gameSavedMode); setCoolerBoostState(gameSavedBoost); } } break; }
+        case SettingsPage::ReduceMotion: kit::gReduceMotion = value != 0; Settings::setValue("UI/reduceMotion", value != 0); break;
         case SettingsPage::AppProfiles: appProfiles->setEnabled(value != 0); break;
         case SettingsPage::AppProfilesEdit: appProfiles->edit(this); break;
         case SettingsPage::ExportCsv: {
@@ -1585,6 +1588,12 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
     if (!histLoaded) historyLoad();                                                           // never decide "no row today" before the file has been read
     if (sn.chargeFull > 0 && sn.chargeDesign > 0 && histLast != QDate::currentDate()) {          // one health sample per calendar day
         const double h = 100.0 * sn.chargeFull / sn.chargeDesign; if (h > 20 && h <= 120) historyAppend(QString("D,%1,%2,%3").arg(QDate::currentDate().toString(Qt::ISODate)).arg(h, 0, 'f', 1).arg(int(sn.cycles)));
+        // wear is normally slow: a drop of 2 points or more within 30 days deserves a heads-up (at most one per month)
+        for (const HistPoint &q : std::as_const(histPts)) if (q.day <= QDate::currentDate().addDays(-28) && q.day >= QDate::currentDate().addDays(-35) && q.health - h >= 2.0) {
+            Settings st; const qint64 last = st.getValue("Notify/healthDrop").toLongLong();
+            if (secsNow() - last > 30 * 86400LL) { Settings::setValue("Notify/healthDrop", qlonglong(secsNow()));
+                if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery health fell from %1 % to %2 % in a month. That is faster than normal wear: check the Battery tab, keep the charge limit at 60-80 %, and avoid heat.").arg(q.health, 0, 'f', 1).arg(h, 0, 'f', 1), QSystemTrayIcon::Warning, 15000); }
+            break; }
     }
     // 1) usage learning: seconds plugged in vs on battery, exponentially forgotten (half-life about a week), saved at most every 5 minutes
     const double dt = exLastTick ? qBound(0.0, double(now - exLastTick), 30.0) : 0; exLastTick = now;

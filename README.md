@@ -8,6 +8,11 @@ Goal: **work on every MSI laptop that msi-ec supports** (gaming series mostly). 
 
 ![dashboard](docs/screenshots/dashboard.png)
 
+<p>
+<img src="docs/screenshots/controls.png" width="49%" alt="Controls"> <img src="docs/screenshots/displays.png" width="49%" alt="Displays">
+<img src="docs/screenshots/settings.png" width="49%" alt="Settings">
+</p>
+
 **Install (Debian/Ubuntu/Kali tested; Fedora, Arch, openSUSE paths written, untested):**
 
 ```bash
@@ -31,6 +36,7 @@ persists it. The app shows a one-click "Fix it now" banner instead of an error d
 - **KDE integration** - two-way sync with the power-profiles-daemon slider, plus `plasma/local.battery-msi`: the Power & Battery popup with the MSI controls built in.
 - **Displays tab**: the laptop panel's refresh rate with **"Follow the power source"** (highest rate on the charger, 60 Hz on battery, about 3 W less), via `kscreen-doctor` on KDE (X11 and Wayland) or `xrandr` on any X11 desktop. External monitors are controlled over the video cable with **DDC/CI**: brightness and contrast always, and input, picture mode, colour temperature, RGB gain, sharpness and volume when the monitor reports them. Needs DDC/CI switched on in the monitor's own menu. MSI-specific extras (Night Vision, crosshair...) are not implemented yet: use *Copy monitor report* and open an issue with your model.
 - **Automatic battery calibration with the charger connected**: reproduces what MSI's own tool does (charge to 100 %, simulate an unplug through the firmware's adapter-simulation register, discharge to 20 %, restore) as a root service with safeguards: originals saved first, restored on every exit and at the next boot, 20-minute no-progress watchdog, battery floor. **Verified on the MSI Crosshair 16 HX AI (MS-15P4) only**: on any other board the app asks before using it and offers the guided manual version (no EC write). Needs the `msi-wmi-platform` driver (the kernel's own, or a DKMS copy the installer registers on kernels 6.5+).
+- **Per-app profiles**: pick programs (Settings > Automation > App profiles) and the app switches power mode, Cooler Boost and the laptop screen rate while they run, then puts everything back. **Battery health history** graph with a marker on each calibration, a health-drop alert, a *Reduce motion* switch, and an installer `--dry-run` that lists every system change before making any.
 - **Vendor badges and panel icons** drawn as original neon marks in the app's accent colour (not the companies' official logos; all names are trademarks of their owners).
 - Developed on an MSI Crosshair 16 HX AI (MS-15P4, EC 15P4EMS1.105), msi-ec 0.13, Kali + Plasma 6.7. **Other MSI models should work but are untested - please open an issue with your model and what the Dashboard shows.**
 - Bundled fonts: Rajdhani and IBM Plex Mono (SIL OFL, see `resources/fonts`).

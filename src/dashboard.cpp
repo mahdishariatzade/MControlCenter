@@ -229,7 +229,7 @@ class HeaderBar : public QWidget {
 public:
     HeaderBar(QWidget *p) : QWidget(p) { setFixedHeight(66); }
     QString title, sub, left, right; bool leftOk = true, rightOk = true; double reveal = 0, delay = 0;
-    bool tick(double clock, double) { reveal = easeOut((clock - delay) / 0.4); return reveal < 1 || gBoost; }
+    bool tick(double clock, double) { reveal = gReduceMotion ? 1 : easeOut((clock - delay) / 0.4); return reveal < 1 || gBoost; }
 protected:
     void paintEvent(QPaintEvent *) override {
         if (reveal <= 0.001) return; QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setOpacity(reveal);

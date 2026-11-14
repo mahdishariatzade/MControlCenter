@@ -17,7 +17,7 @@ namespace kit {
 inline const QColor kBg(14, 15, 17), kPanel(21, 23, 26), kLine(255, 255, 255, 38), kText(233, 230, 223), kDim(139, 143, 150), kHot(255, 70, 50);
 inline const QColor kAccentMode[4] = {QColor(255, 75, 31), QColor(231, 224, 205), QColor(110, 170, 215), QColor(150, 205, 90)};   // turbo, balanced, silent, eco
 inline QColor gAccent = kAccentMode[1], gAccentTarget = kAccentMode[1];
-inline bool gBoost = false; inline double gClock = 0;           // seconds since show, drives the hazard strip
+inline bool gBoost = false, gReduceMotion = false; inline double gClock = 0;   // gReduceMotion: no entrance animations, no hover easing (accessibility + a little less CPU)           // seconds since show, drives the hazard strip
 
 inline const char *RAJ = "Rajdhani", *MONO = "IBM Plex Mono";
 inline QFont fnt(const char *fam, int px, int weight = QFont::Normal, qreal ls = 0) {
@@ -64,7 +64,7 @@ class Panel : public QWidget {
 public:
     Panel(const QString &idx, const QString &title, QWidget *p) : QWidget(p), idx(idx), title(title) { icon = iconForTitle(title); setMouseTracking(true); }
     QString idx, title; int icon = IcNone; double reveal = 0, hov = 0, delay = 0; bool hovering = false; std::function<void()> wake;   // wake: lets an idle page restart its animation timer
-    bool tick(double clock, double dt) { reveal = easeOut((clock - delay) / 0.38); double old = hov; hov += ((hovering ? 1 : 0) - hov) * ease(dt, 0.07); return reveal < 1 || fabs(hov - old) > 0.002; }
+    bool tick(double clock, double dt) { reveal = gReduceMotion ? 1 : easeOut((clock - delay) / 0.38); double old = hov; hov += ((hovering ? 1 : 0) - hov) * (gReduceMotion ? 1.0 : ease(dt, 0.07)); return reveal < 1 || fabs(hov - old) > 0.002; }
 protected:
     virtual void paintBody(QPainter &, const QRectF &) = 0;
     void enterEvent(QEnterEvent *) override { hovering = true; if (wake) wake(); }
@@ -98,7 +98,7 @@ public:
     std::vector<Item> items; int checked = -1, active = -1; bool controls = false; double delay = 0, reveal = 0; std::function<void(int)> onClick;   // active: an action tile whose result is currently in effect
     std::vector<double> hov, press;
     void setItems(std::vector<Item> v) { items = std::move(v); hov.assign(items.size(), 0); press.assign(items.size(), 0); update(); }
-    bool tick(double clock, double dt) { reveal = easeOut((clock - delay) / 0.38); bool act = reveal < 1; for (size_t i = 0; i < items.size(); ++i) { double h = hov[i]; hov[i] += (((int) i == hot ? 1 : 0) - hov[i]) * ease(dt, 0.07); press[i] *= exp(-dt / 0.1); act |= fabs(hov[i] - h) > 0.002 || press[i] > 0.01; } return act; }
+    bool tick(double clock, double dt) { reveal = gReduceMotion ? 1 : easeOut((clock - delay) / 0.38); bool act = reveal < 1; for (size_t i = 0; i < items.size(); ++i) { double h = hov[i]; hov[i] += (((int) i == hot ? 1 : 0) - hov[i]) * ease(dt, 0.07); press[i] *= exp(-dt / 0.1); act |= fabs(hov[i] - h) > 0.002 || press[i] > 0.01; } return act; }
 protected:
     int hot = -1; bool checkable;
     int visibleCount() const { int n = 0; for (auto &i : items) n += i.visible; return n; }
