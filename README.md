@@ -1,9 +1,9 @@
 
-## This fork: an open-source control center for MSI laptops (2026-11)
+##  Open-source control centre for MSI laptops 
 
-Goal: **work on every MSI laptop that msi-ec supports** (gaming series first). **KDE Plasma is the primary desktop**; GNOME, XFCE and others work through the plain Qt tray app and the session D-Bus API (a GNOME Shell integration is welcome - see CONTRIBUTING.md). Light on resources: ~0 CPU in the tray, a few % of one core while the window is open.
+Goal: **work on every MSI laptop that msi-ec supports** (gaming series mostly). **KDE Plasma is the primary desktop**; GNOME, XFCE and others work through the plain Qt tray app and the session D-Bus API (a GNOME Shell integration is welcome - see CONTRIBUTING.md). Light on resources: ~0 CPU in the tray, a few % of one core while the window is open.
 
-**Your laptop not listed or something looks off?** Run `/usr/libexec/mcontrolcenter/mcontrolcenter-doctor report` and open a *Hardware report* issue - that is how device support grows.
+**Your laptop not listed or something looks off?** Run `/usr/libexec/mcontrolcenter/mcontrolcenter-doctor report` and open a *Hardware report* issue
 
 
 ![dashboard](docs/screenshots/dashboard.png)
