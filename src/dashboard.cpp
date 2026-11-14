@@ -169,7 +169,7 @@ protected:
 // ───────────────────────────── 04 history graph ─────────────────────────────
 class GraphPanel : public Panel {
 public:
-    GraphPanel(QWidget *p) : Panel("04", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(150); }
+    GraphPanel(QWidget *p) : Panel("04", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(118); }
     void push(double cpu, double gpu, double watts) { for (auto *d : {&c, &g, &w}) if (d->size() >= N) d->pop_front(); c.push_back(cpu); g.push_back(gpu); w.push_back(watts); }
     bool hasGpu = false;
     QString csv() const { QString o = "seconds_ago,cpu_c,gpu_c,battery_watts\n"; int n = int(c.size()); for (int i = 0; i < n; ++i) o += QString("%1,%2,%3,%4\n").arg(n - 1 - i).arg(c[i] < 0 ? QString() : QString::number(c[i], 'f', 0)).arg(g[i] < 0 ? QString() : QString::number(g[i], 'f', 0)).arg(w[i], 0, 'f', 1); return o; }
@@ -268,7 +268,7 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     static bool fontsLoaded = false;
     if (!fontsLoaded) { fontsLoaded = true; for (const char *f : {"Rajdhani-Medium", "Rajdhani-SemiBold", "Rajdhani-Bold", "IBMPlexMono-Regular", "IBMPlexMono-Medium"}) QFontDatabase::addApplicationFont(QString(":/fonts/%1.ttf").arg(f)); }
 
-    auto *root = new QVBoxLayout(this); root->setContentsMargins(18, 12, 18, 14); root->setSpacing(10);
+    auto *root = new QVBoxLayout(this); root->setContentsMargins(18, 12, 18, 14); root->setSpacing(8);
     header = new HeaderBar(this); root->addWidget(header);
     banner = new BannerBar(this); root->addWidget(banner);
     banner->onClick = [this] { emit fixRequested(); };
@@ -277,12 +277,13 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     auto *row1 = new QHBoxLayout; row1->setSpacing(10); row1->addWidget(thermal, 5); row1->addWidget(fans, 3); row1->addWidget(power, 4); root->addLayout(row1, 5);
     root->addWidget(graph, 3);
     modes = new TileStrip(true, this); presets = new TileStrip(false, this);
-    root->addWidget(modes); root->addWidget(presets);
+    modeLabel = new SectionLabel("POWER MODE", "How hard the laptop works. One mode is always on.", this); presetLabel = new SectionLabel("QUICK SETUPS", "Shortcuts: one tap changes the mode, fans and charge limit together.", this);
+    root->addSpacing(2); root->addWidget(modeLabel); root->addWidget(modes); root->addSpacing(6); root->addWidget(presetLabel); root->addWidget(presets);
     header->delay = 0; thermal->delay = 0.08; fans->delay = 0.16; power->delay = 0.24; graph->delay = 0.34; modes->delay = 0.44; presets->delay = 0.52;
 
     modes->setItems({{"Turbo", "max performance", kAccentMode[0]}, {"Balanced", "comfort", kAccentMode[1]}, {"Silent", "quiet fans", kAccentMode[2]}, {"Eco", "lowest power", kAccentMode[3]}});
     modes->onClick = [this](int i) { modes->checked = i; cur.mode = i; retargetAccent(); emit modeRequested(i); };
-    presets->setItems({{"Gaming", "turbo + cooler boost", kText}, {"Work", "balanced, fans auto", kText}, {"Night", "silent, fans auto", kText}, {"Travel", "eco + 80% charge cap", kText}});
+    presets->setItems({{"Gaming", "Turbo + Cooler Boost on", kText}, {"Work", "Balanced · fans automatic", kText}, {"Night", "Silent · fans automatic", kText}, {"Travel", "Eco · charge capped at 80%", kText}});
     presets->onClick = [this](int i) { applyPreset(i); };
     fans->onBoost = [this](bool on) { fans->boost = on; gBoost = on; emit coolerBoostRequested(on); };
     power->onLimit = [this](int v) { power->limit = v; emit chargeLimitRequested(v); };
@@ -324,6 +325,7 @@ void DashboardPage::setData(const DashData &d) {
     thermal->cpu = d.cpuTemp; thermal->gpu = qMax(d.gpuTemp, 0); thermal->gpuOff = d.gpuTemp == 0;
     fans->pct[0] = d.cpuFanPct; fans->pct[1] = d.gpuFanPct; fans->rpm[0] = d.cpuFanRpm; fans->rpm[1] = d.gpuFanRpm; fans->boost = d.coolerBoost; gBoost = d.coolerBoost;
     modes->checked = d.mode; power->limit = d.chargeLimit; retargetAccent();
+    presets->active = (d.mode == 0 && d.coolerBoost) ? 0 : (d.mode == 1 && !d.coolerBoost) ? 1 : (d.mode == 2 && !d.coolerBoost) ? 2 : (d.mode == 3 && d.chargeLimit == 80) ? 3 : -1;
 }
 
 void DashboardPage::animate() {
@@ -345,8 +347,8 @@ void DashboardPage::animate() {
     if (fans->tick(now, sdt) || fanFull) fans->update();
     fans->placeGlyphs();
     if (header->tick(now, sdt)) header->update();
-    if (modes->tick(now, sdt)) modes->update();
-    if (presets->tick(now, sdt)) presets->update();
+    if (modes->tick(now, sdt)) { modes->update(); modeLabel->reveal = modes->reveal; modeLabel->update(); }
+    if (presets->tick(now, sdt)) { presets->update(); presetLabel->reveal = presets->reveal; presetLabel->update(); }
 }
 
 DashboardPage::PowerText DashboardPage::powerText() const { return {power->state, power->draw, power->eta, power->health, power->cycles}; }

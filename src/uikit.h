@@ -86,8 +86,8 @@ protected:
 class TileStrip : public QWidget {
 public:
     struct Item { QString label, sub; QColor accent; bool enabled = true; bool visible = true; };
-    TileStrip(bool checkable, QWidget *p) : QWidget(p), checkable(checkable) { setMouseTracking(true); setFixedHeight(checkable ? 62 : 50); }
-    std::vector<Item> items; int checked = -1; bool controls = false; double delay = 0, reveal = 0; std::function<void(int)> onClick;
+    TileStrip(bool checkable, QWidget *p) : QWidget(p), checkable(checkable) { setMouseTracking(true); setFixedHeight(checkable ? 58 : 46); }
+    std::vector<Item> items; int checked = -1, active = -1; bool controls = false; double delay = 0, reveal = 0; std::function<void(int)> onClick;   // active: an action tile whose result is currently in effect
     std::vector<double> hov, press;
     void setItems(std::vector<Item> v) { items = std::move(v); hov.assign(items.size(), 0); press.assign(items.size(), 0); update(); }
     bool tick(double clock, double dt) { reveal = easeOut((clock - delay) / 0.38); bool act = reveal < 1; for (size_t i = 0; i < items.size(); ++i) { double h = hov[i]; hov[i] += (((int) i == hot ? 1 : 0) - hov[i]) * ease(dt, 0.07); press[i] *= exp(-dt / 0.1); act |= fabs(hov[i] - h) > 0.002 || press[i] > 0.01; } return act; }
@@ -110,12 +110,28 @@ protected:
             if (!items[i].visible) continue; const Item &it = items[i]; bool on = checkable && i == checked;
             QRectF r = rectOf(i).adjusted(1, 1, -1, -1); double s = 1 - 0.03 * press[i]; r = QRectF(r.center().x() - r.width() / 2 * s, r.center().y() - r.height() / 2 * s, r.width() * s, r.height() * s);
             QColor ac = checkable ? it.accent : gAccent; QPainterPath path = chamfer(r, checkable ? 11 : 8);
-            p.setPen(QPen(on ? ac : mix(kLine, alpha(ac, 0.9), hov[i]), 1)); p.setBrush(on ? ac : alpha(ac, 0.06 * hov[i])); p.drawPath(path);
+            bool act = !checkable && i == active;
+            p.setPen(QPen(on || act ? ac : mix(kLine, alpha(ac, 0.9), hov[i]), act ? 1.6 : 1)); p.setBrush(on ? ac : act ? alpha(ac, 0.10) : alpha(ac, 0.06 * hov[i])); p.drawPath(path);
             QColor tc = !it.enabled ? alpha(kDim, 0.5) : on ? kBg : kText;
             p.setFont(fnt(RAJ, checkable ? 21 : 17, QFont::Bold, 1.5)); p.setPen(tc); p.drawText(QRectF(r.left() + 14, r.top() + (checkable ? 7 : 5), r.width() - 28, 24), Qt::AlignLeft | Qt::AlignVCenter, it.label.toUpper());
             p.setFont(fnt(MONO, 10, QFont::Normal, 0)); p.setPen(on ? alpha(kBg, 0.7) : kDim); p.drawText(QRectF(r.left() + 14, r.top() + (checkable ? 32 : 26), r.width() - 28, 16), Qt::AlignLeft | Qt::AlignVCenter, it.sub);
             if (checkable) { p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(on ? alpha(kBg, 0.8) : alpha(kDim, 0.7)); p.drawText(QRectF(r.right() - 38, r.top() + 8, 28, 14), Qt::AlignRight, QString("M%1").arg(i + 1)); }
+            else if (act) { p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(ac); p.drawText(QRectF(r.right() - 80, r.top() + 6, 68, 14), Qt::AlignRight, "ACTIVE"); }
         }
+    }
+};
+
+// A heading for a group of controls: what the group is, and what it does, in one line.
+class SectionLabel : public QWidget {
+public:
+    SectionLabel(const QString &t, const QString &h, QWidget *p) : QWidget(p), title(t), hint(h) { setFixedHeight(22); }
+    QString title, hint; double reveal = 1;
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setOpacity(reveal);
+        QFont tf = fnt(RAJ, 15, QFont::Bold, 2.5); p.setFont(tf); p.setPen(gAccent); p.drawText(QRectF(0, 0, 400, height()), Qt::AlignLeft | Qt::AlignVCenter, title);
+        double x = QFontMetricsF(tf).horizontalAdvance(title) + 14; p.setFont(fnt(MONO, 10)); p.setPen(kDim); p.drawText(QRectF(x, 0, width() - x, height()), Qt::AlignLeft | Qt::AlignVCenter, hint);
+        p.setPen(QPen(alpha(kText, 0.12), 1)); p.drawLine(QPointF(0, height() - 1), QPointF(width(), height() - 1));
     }
 };
 

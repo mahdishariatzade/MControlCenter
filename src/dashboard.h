@@ -12,8 +12,8 @@ class ThermalPanel;
 class FanPanel;
 class PowerPanel;
 class GraphPanel;
-namespace kit { class TileStrip; }
-using kit::TileStrip;
+namespace kit { class TileStrip; class SectionLabel; }
+using kit::TileStrip; using kit::SectionLabel;
 class HeaderBar;
 class BannerBar;
 class QVBoxLayout;
@@ -71,7 +71,7 @@ private:
 
     HeaderBar *header; BannerBar *banner;
     ThermalPanel *thermal; FanPanel *fans; PowerPanel *power; GraphPanel *graph;
-    TileStrip *modes, *presets;
+    TileStrip *modes, *presets; SectionLabel *modeLabel, *presetLabel;
     QTimer fastTimer; double slowAcc = 0;
     QElapsedTimer sinceShow;
     Caps caps; DashData cur;
