@@ -1,0 +1,47 @@
+#include "sensors.h"
+#include <QFile>
+#include <QDir>
+
+namespace {
+QString rd(const QString &path) { QFile f(path); return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).trimmed() : QString(); }
+qint64 rdi(const QString &path, qint64 def = -1) { bool ok; qint64 v = rd(path).toLongLong(&ok); return ok ? v : def; }
+const QString EC = "/sys/devices/platform/msi-ec/";
+}
+
+SensorWorker::SensorWorker() { qRegisterMetaType<Snapshot>("Snapshot"); }
+
+void SensorWorker::start() {
+    for (const QString &n : QDir("/sys/class/power_supply").entryList({"BAT*"}, QDir::Dirs)) { batPath = "/sys/class/power_supply/" + n; break; }
+    timer = new QTimer(this); timer->setInterval(1000); connect(timer, &QTimer::timeout, this, &SensorWorker::poll); timer->start(); poll();
+}
+void SensorWorker::setFast(bool fast) { if (timer) timer->setInterval(fast ? 1000 : 5000); if (fast) poll(); }
+void SensorWorker::pollNow() { poll(); }
+
+void SensorWorker::poll() {
+    Snapshot s; DashData &d = s.d;
+    s.msiEc = QFile::exists(EC + "shift_mode");
+    if (s.msiEc) {
+        d.cpuTemp = int(rdi(EC + "cpu/realtime_temperature", 0));
+        d.gpuTemp = QFile::exists(EC + "gpu/realtime_temperature") ? int(rdi(EC + "gpu/realtime_temperature", -1)) : -1;
+        d.cpuFanPct = int(rdi(EC + "cpu/realtime_fan_speed", -1));
+        d.gpuFanPct = QFile::exists(EC + "gpu/realtime_fan_speed") ? int(rdi(EC + "gpu/realtime_fan_speed", -1)) : -1;
+        const QString sm = rd(EC + "shift_mode"), fm = rd(EC + "fan_mode");
+        d.mode = sm == "turbo" ? 0 : sm == "eco" ? 3 : (sm == "comfort" && fm == "silent") ? 2 : (sm == "comfort" || sm == "sport") ? 1 : -1;
+        d.coolerBoost = rd(EC + "cooler_boost") == "on";
+    }
+    int thr = int(rdi(batPath + "/charge_control_end_threshold", 100)); d.chargeLimit = (thr <= 0 || thr > 100) ? 100 : thr;
+    s.status = rd(batPath + "/status"); s.cap = int(rdi(batPath + "/capacity", 0));
+    s.volts = rdi(batPath + "/voltage_now", 0) / 1e6; s.currentUa = qAbs(double(rdi(batPath + "/current_now", 0)));
+    s.chargeNow = rdi(batPath + "/charge_now", 0); s.chargeFull = rdi(batPath + "/charge_full", 0); s.chargeDesign = rdi(batPath + "/charge_full_design", 0); s.cycles = rdi(batPath + "/cycle_count", 0);
+    s.ac = rdi("/sys/class/power_supply/ADP1/online", 0) == 1;
+    s.dgpu = rd("/sys/bus/pci/devices/0000:01:00.0/power_state");
+    for (const QString &h : QDir("/sys/class/hwmon").entryList({"hwmon*"}, QDir::Dirs)) if (rd("/sys/class/hwmon/" + h + "/name") == "nvme") { s.nvme = int(rdi("/sys/class/hwmon/" + h + "/temp1_input") / 1000); break; }
+    QStringList st = rd("/proc/stat").section('\n', 0, 0).split(' ', Qt::SkipEmptyParts);
+    if (st.size() > 8) { quint64 tot = 0; for (int k = 1; k <= 8; ++k) tot += st[k].toULongLong(); quint64 idle = st[4].toULongLong() + st[5].toULongLong();
+        if (lastTotal) s.load = QString("%1%").arg(int(100.0 * (1.0 - double(idle - lastIdle) / double(qMax<quint64>(tot - lastTotal, 1))) + 0.5)); lastTotal = tot; lastIdle = idle; }
+    double fsum = 0; int fn = 0; for (const QString &c : QDir("/sys/devices/system/cpu").entryList({"cpu[0-9]*"}, QDir::Dirs)) { qint64 f = rdi("/sys/devices/system/cpu/" + c + "/cpufreq/scaling_cur_freq"); if (f > 0) { fsum += f; ++fn; } }
+    s.ghz = fn ? fsum / fn / 1e6 : 0;
+    const QString mi = rd("/proc/meminfo"); auto kb = [&](const char *k) { int a = mi.indexOf(QString(k) + ":"); return a < 0 ? 0.0 : mi.mid(a + QString(k).size() + 1, 20).trimmed().section(' ', 0, 0).toDouble(); };
+    s.memTotalGb = kb("MemTotal") / 1048576; s.memUsedGb = (kb("MemTotal") - kb("MemAvailable")) / 1048576;
+    emit snapshot(s);
+}

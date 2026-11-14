@@ -17,6 +17,7 @@
  */
 
 #include "msi-ec_helper.h"
+#include <QFile>
 #include "helper/service.h"
 #include "mainwindow.h"
 
@@ -31,7 +32,8 @@ MsiEcHelper::MsiEcHelper() {
 }
 
 bool MsiEcHelper::isMsiEcModuleLoaded() {
-    return getValue<bool>("isMsiEcModuleLoaded", false);
+    // Answered from the filesystem: the helper round trip is a blocking D-Bus call (~60 ms) that used to freeze the UI every second.
+    return QFile::exists("/sys/devices/platform/msi-ec");
 }
 
 //////////////// webcam ////////////////

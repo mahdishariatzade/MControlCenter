@@ -16,6 +16,7 @@ class TileStrip;
 class HeaderBar;
 class BannerBar;
 class QVBoxLayout;
+struct Snapshot;
 
 // What this particular laptop can do (probed once from msi-ec sysfs / the EC backend).
 struct Caps {
@@ -42,7 +43,9 @@ Q_OBJECT
 public:
     explicit DashboardPage(QWidget *parent = nullptr);
     void setCaps(const Caps &c);
-    void setData(const DashData &d);        // called by MainWindow once a second with EC values
+    void setData(const DashData &d);        // legacy path (no msi-ec): MainWindow supplies EC values
+    void applySnapshot(const Snapshot &s);  // normal path: sensor thread -> UI, once a second
+    void setRpm(int cpuRpm, int gpuRpm);    // fan RPM comes from the ec_sys helper (cached), cheap to set from the GUI thread
     void setControlsEnabled(bool enabled);
     void setProblem(const QString &text, const QString &button);   // empty text hides the banner
 
@@ -57,7 +60,6 @@ protected:
     void hideEvent(QHideEvent *e) override;
 
 private:
-    void sample();                           // read sysfs (battery, cpu load/freq, ram, nvme, dGPU)
     void animate();
     void applyPreset(int idx);
     void retargetAccent();
@@ -65,12 +67,10 @@ private:
     HeaderBar *header; BannerBar *banner;
     ThermalPanel *thermal; FanPanel *fans; PowerPanel *power; GraphPanel *graph;
     TileStrip *modes, *presets;
-    QTimer fastTimer, slowTimer;
+    QTimer fastTimer;
     QElapsedTimer sinceShow;
     Caps caps; DashData cur;
     bool controlsEnabled = false;
-    quint64 lastTotal = 0, lastIdle = 0;
-    QString batPath;
 };
 
 #endif // DASHBOARD_H

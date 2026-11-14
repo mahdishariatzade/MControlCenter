@@ -27,6 +27,8 @@
 #include <QDBusPendingCallWatcher>
 #include "dashboard.h"
 #include "bridge.h"
+#include "sensors.h"
+#include <QThread>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -46,6 +48,7 @@ private:
     DashboardPage *dashboard = nullptr;
     ControlBridge *bridge = nullptr;
     DashData dashData;
+    SensorWorker *sensors = nullptr; QThread sensorThread;
     void pushDashboard();
     void probeCaps();
     void checkDriver();

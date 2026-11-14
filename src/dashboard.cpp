@@ -1,4 +1,5 @@
 #include "dashboard.h"
+#include "sensors.h"
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
@@ -347,7 +348,6 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     setObjectName("dashboard");
     static bool fontsLoaded = false;
     if (!fontsLoaded) { fontsLoaded = true; for (const char *f : {"Rajdhani-Medium", "Rajdhani-SemiBold", "Rajdhani-Bold", "IBMPlexMono-Regular", "IBMPlexMono-Medium"}) QFontDatabase::addApplicationFont(QString(":/fonts/%1.ttf").arg(f)); }
-    for (const QString &n : QDir("/sys/class/power_supply").entryList({"BAT*"}, QDir::Dirs)) { batPath = "/sys/class/power_supply/" + n; break; }
 
     auto *root = new QVBoxLayout(this); root->setContentsMargins(18, 12, 18, 14); root->setSpacing(10);
     header = new HeaderBar(this); root->addWidget(header);
@@ -369,7 +369,6 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     power->onLimit = [this](int v) { power->limit = v; emit chargeLimitRequested(v); };
 
     connect(&fastTimer, &QTimer::timeout, this, &DashboardPage::animate); fastTimer.setInterval(16); fastTimer.setTimerType(Qt::PreciseTimer);
-    connect(&slowTimer, &QTimer::timeout, this, &DashboardPage::sample); slowTimer.setInterval(1000);
     setControlsEnabled(false);
 }
 
@@ -387,8 +386,8 @@ void DashboardPage::setProblem(const QString &text, const QString &button) { ban
 
 void DashboardPage::setControlsEnabled(bool en) { controlsEnabled = en; modes->controls = en; presets->controls = en; for (auto &i : modes->items) i.enabled = en; for (auto &i : presets->items) i.enabled = en; }
 
-void DashboardPage::showEvent(QShowEvent *) { sinceShow.start(); gClock = 0; fastTimer.start(); slowTimer.start(); sample(); }   // restarts the entrance animation each time the window opens
-void DashboardPage::hideEvent(QHideEvent *) { fastTimer.stop(); slowTimer.stop(); }                               // hidden in the tray = zero CPU
+void DashboardPage::showEvent(QShowEvent *) { sinceShow.start(); gClock = 0; fastTimer.start(); }   // restarts the entrance animation each time the window opens
+void DashboardPage::hideEvent(QHideEvent *) { fastTimer.stop(); }                               // hidden in the tray = zero CPU
 
 void DashboardPage::retargetAccent() { gAccentTarget = cur.mode >= 0 ? kAccentMode[cur.mode] : kAccentMode[1]; }
 
@@ -409,7 +408,8 @@ void DashboardPage::setData(const DashData &d) {
 }
 
 void DashboardPage::animate() {
-    double now = sinceShow.elapsed() / 1000.0, dt = qBound(0.001, now - gClock, 0.05); gClock = now;
+    double now = sinceShow.elapsed() / 1000.0, rawDt = now - gClock, dt = qBound(0.001, rawDt, 0.05); gClock = now;
+    static const bool frameLog = qEnvironmentVariableIsSet("MCC_FRAMELOG"); if (frameLog && rawDt > 0.030) fprintf(stderr, "[frame] gap %.0f ms at t=%.2f\n", rawDt * 1000, now);
     QColor before = gAccent; gAccent = mix(gAccent, gAccentTarget, ease(dt, 0.12));      // accent cross-fades when the mode changes
     bool accentMoved = qAbs(before.red() - gAccent.red()) + qAbs(before.green() - gAccent.green()) + qAbs(before.blue() - gAccent.blue()) > 0;
     if (accentMoved) for (QWidget *w : std::initializer_list<QWidget *>{header, thermal, fans, power, graph, modes, presets}) w->update();
@@ -424,36 +424,26 @@ void DashboardPage::animate() {
     if (presets->tick(now, dt)) presets->update();
 }
 
-void DashboardPage::sample() {
-    double watts = 0, hours = 0; QString status = readFile(batPath + "/status");
-    int cap = int(readInt(batPath + "/capacity", 0));
-    double v = readInt(batPath + "/voltage_now", 0) / 1e6, curA = qAbs(double(readInt(batPath + "/current_now", 0))); watts = v * curA / 1e6;
-    double now = readInt(batPath + "/charge_now", 0), full = readInt(batPath + "/charge_full", 0), design = readInt(batPath + "/charge_full_design", 0);
-    bool charging = status == "Charging", dis = status == "Discharging";
-    if (curA > 1000) hours = dis ? now / curA : charging ? (full - now) / curA : 0;
-    power->cap = cap; power->charging = charging; power->ac = readInt("/sys/class/power_supply/ADP1/online", 0) == 1 || charging;
-    power->state = charging ? "CHARGING" : dis ? "DISCHARGING" : status == "Full" ? "FULL" : status == "Not charging" ? "HOLDING AT LIMIT" : status.toUpper();
+void DashboardPage::setRpm(int cpuRpm, int gpuRpm) { fans->rpm[0] = cpuRpm; fans->rpm[1] = gpuRpm; }
+
+// Everything the UI shows from sysfs arrives here, already read on the sensor thread: this function only formats and assigns (microseconds).
+void DashboardPage::applySnapshot(const Snapshot &s) {
+    if (s.msiEc) { int r0 = fans->rpm[0], r1 = fans->rpm[1]; setData(s.d); fans->rpm[0] = r0; fans->rpm[1] = r1; }
+    else cur.chargeLimit = s.d.chargeLimit;
+    double hours = 0, watts = s.volts * s.currentUa / 1e6;
+    bool charging = s.status == "Charging", dis = s.status == "Discharging";
+    if (s.currentUa > 1000) hours = dis ? s.chargeNow / s.currentUa : charging ? (s.chargeFull - s.chargeNow) / s.currentUa : 0;
+    power->cap = s.cap; power->charging = charging; power->ac = s.ac || charging;
+    power->state = charging ? "CHARGING" : dis ? "DISCHARGING" : s.status == "Full" ? "FULL" : s.status == "Not charging" ? "HOLDING AT LIMIT" : s.status.toUpper();
     power->draw = (dis || charging) ? QString("%1 W %2").arg(watts, 0, 'f', 1).arg(charging ? "in" : "out") : "idle";
     power->eta = fmtEta(hours).isEmpty() ? QString() : fmtEta(hours) + (dis ? " left" : " to full");
-    power->health = design > 0 ? QString("%1 %  ·  %2 / %3 Wh").arg(int(100.0 * full / design + 0.5)).arg(full * v / 1e6, 0, 'f', 0).arg(design * v / 1e6, 0, 'f', 0) : QString();
-    qint64 cyc = readInt(batPath + "/cycle_count", 0); power->cycles = cyc > 0 ? QString::number(cyc) : QStringLiteral("not reported");
+    power->health = s.chargeDesign > 0 ? QString("%1 %  ·  %2 / %3 Wh").arg(int(100.0 * s.chargeFull / s.chargeDesign + 0.5)).arg(s.chargeFull * s.volts / 1e6, 0, 'f', 0).arg(s.chargeDesign * s.volts / 1e6, 0, 'f', 0) : QString();
+    power->cycles = s.cycles > 0 ? QString::number(s.cycles) : QStringLiteral("not reported");
     header->left = power->ac ? "AC POWER" : "BATTERY"; header->leftOk = power->ac;
-    QString dg = readFile("/sys/bus/pci/devices/0000:01:00.0/power_state");
-    if (caps.gpuTemp && !dg.isEmpty()) { header->right = dg.startsWith("D3") ? "dGPU ASLEEP" : "dGPU ACTIVE"; header->rightOk = dg.startsWith("D3"); } else header->right.clear();
-
-    int nv = -1; for (const QString &h : QDir("/sys/class/hwmon").entryList({"hwmon*"}, QDir::Dirs)) if (readFile("/sys/class/hwmon/" + h + "/name") == "nvme") { nv = int(readInt("/sys/class/hwmon/" + h + "/temp1_input") / 1000); break; }
-    thermal->hasNvme = nv > 0; thermal->nvme = nv;
+    if (caps.gpuTemp && !s.dgpu.isEmpty()) { header->right = s.dgpu.startsWith("D3") ? "dGPU ASLEEP" : "dGPU ACTIVE"; header->rightOk = s.dgpu.startsWith("D3"); } else header->right.clear();
+    thermal->hasNvme = s.nvme > 0; thermal->nvme = s.nvme;
     thermal->cpuPeak = qMax<double>(cur.cpuTemp, thermal->cpuPeak - 0.6); thermal->gpuPeak = qMax<double>(cur.gpuTemp, thermal->gpuPeak - 0.6);
     graph->push(cur.cpuTemp > 0 ? cur.cpuTemp : -1, cur.gpuTemp > 0 ? cur.gpuTemp : -1, dis ? watts : 0);
-
-    // header sub-line: load / clock / ram (cheap, once a second)
-    QStringList st = readFile("/proc/stat").section('\n', 0, 0).split(' ', Qt::SkipEmptyParts); QString load;
-    if (st.size() > 8) { quint64 tot = 0; for (int k = 1; k <= 8; ++k) tot += st[k].toULongLong(); quint64 idle = st[4].toULongLong() + st[5].toULongLong(); if (lastTotal) load = QString("%1%").arg(int(100.0 * (1.0 - double(idle - lastIdle) / double(qMax<quint64>(tot - lastTotal, 1))) + 0.5)); lastTotal = tot; lastIdle = idle; }
-    double fsum = 0; int fn = 0; for (const QString &c : QDir("/sys/devices/system/cpu").entryList({"cpu[0-9]*"}, QDir::Dirs)) { qint64 f = readInt("/sys/devices/system/cpu/" + c + "/cpufreq/scaling_cur_freq"); if (f > 0) { fsum += f; ++fn; } }
-    QString mi = readFile("/proc/meminfo"); auto kb = [&](const char *k) { int a = mi.indexOf(QString(k) + ":"); return a < 0 ? 0.0 : mi.mid(a + QString(k).size() + 1, 20).trimmed().section(' ', 0, 0).toDouble(); };
-    double mt = kb("MemTotal"), ma = kb("MemAvailable");
-    QString extra = QString("CPU %1 · %2 GHz · RAM %3/%4 GB").arg(load.isEmpty() ? "—" : load).arg(fn ? fsum / fn / 1e6 : 0, 0, 'f', 1).arg((mt - ma) / 1048576, 0, 'f', 1).arg(mt / 1048576, 0, 'f', 0);
-    header->sub = QString("%1  ·  EC %2  ·  %3").arg(caps.board.isEmpty() ? "—" : caps.board, caps.fw.isEmpty() ? "n/a" : caps.fw, extra);
-    for (QWidget *w : std::initializer_list<QWidget *>{header, thermal, power, graph}) w->update();     // new text/values once a second
-    fans->update();
+    header->sub = QString("%1  ·  EC %2  ·  CPU %3 · %4 GHz · RAM %5/%6 GB").arg(caps.board.isEmpty() ? "—" : caps.board, caps.fw.isEmpty() ? "n/a" : caps.fw, s.load.isEmpty() ? "—" : s.load).arg(s.ghz, 0, 'f', 1).arg(s.memUsedGb, 0, 'f', 1).arg(s.memTotalGb, 0, 'f', 0);
+    for (QWidget *w : std::initializer_list<QWidget *>{header, thermal, power, graph, fans}) w->update();     // new text/values once a second
 }

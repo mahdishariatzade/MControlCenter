@@ -26,11 +26,14 @@
 #include <QJsonDocument>
 #include <QFile>
 #include <QProcess>
+#include <QElapsedTimer>
 #include <QRegularExpression>
 #include <QDBusConnection>
 #include "theme.h"
 
 Operate operate;
+// operate.isMsiEcLoaded() is a blocking D-Bus round trip to the root helper (~60 ms each); this is the same answer from the filesystem.
+static bool msiEcPresent() { return QFile::exists("/sys/devices/platform/msi-ec/shift_mode"); }
 PowerMonitor powerMonitor;
 
 bool isActive = false;
@@ -169,8 +172,17 @@ MainWindow::MainWindow(QWidget *parent)
     connect(dashboard, &DashboardPage::modeRequested, this, &MainWindow::setModeIndex);
     connect(dashboard, &DashboardPage::coolerBoostRequested, this, [this](bool on) { setCoolerBoostState(on); });
     connect(dashboard, &DashboardPage::chargeLimitRequested, this, &MainWindow::setChargeLimit);
+    sensors = new SensorWorker;                       // all sysfs/EC reads live on this thread; the GUI thread only draws
+    sensors->moveToThread(&sensorThread);
+    connect(&sensorThread, &QThread::started, sensors, &SensorWorker::start);
+    connect(&sensorThread, &QThread::finished, sensors, &QObject::deleteLater);
+    connect(sensors, &SensorWorker::snapshot, this, [this](const Snapshot &sn) {
+        int r0 = dashData.cpuFanRpm, r1 = dashData.gpuFanRpm; if (sn.msiEc) { dashData = sn.d; dashData.cpuFanRpm = r0; dashData.gpuFanRpm = r1; }
+        dashboard->applySnapshot(sn);
+    });
+    sensorThread.start();
     bridge = new ControlBridge(this);
-    bridge->stateFn = [this] { if (isActive && operate.updateEcData()) pushDashboard(); return stateJson(); };   // timer is stopped while hidden: read fresh values on demand
+    bridge->stateFn = [this] { QMetaObject::invokeMethod(sensors, "pollNow", Qt::QueuedConnection); return stateJson(); };   // last snapshot now, a fresh one is already on its way
     connect(bridge, &ControlBridge::modeRequested, this, &MainWindow::setModeIndex);
     connect(bridge, &ControlBridge::coolerBoostRequested, this, [this](bool on) { setCoolerBoostState(on); });
     connect(bridge, &ControlBridge::chargeLimitRequested, this, &MainWindow::setChargeLimit);
@@ -217,6 +229,7 @@ MainWindow::MainWindow(QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    sensorThread.quit(); sensorThread.wait(2000);
     delete ui;
 }
 
@@ -257,7 +270,7 @@ void MainWindow::realtimeUpdate() {
 }
 
 void MainWindow::updateData() {
-    if (!isUpdateDataError && (operate.isMsiEcLoaded() || operate.isEcSysModuleLoaded())) {
+    if (!isUpdateDataError && (msiEcPresent() || operate.isEcSysModuleLoaded())) {
         if (!isActive) {
             operate.doProbe();
             setTabsEnabled(true);
@@ -265,18 +278,14 @@ void MainWindow::updateData() {
             probeCaps();
             isActive = true;
         }
-        updateBatteryCharge();
-        updateChargingStatus();
-        updateCpuTemp();
-        updateGpuTemp();
-        updateFanMode();
-        updateFan1Speed();
-        updateFan2Speed();
-        updateKeyboardBrightness();
-        updateWebCamState();
+        // The old per-tab labels do slow EC reads: only refresh them while one of those tabs is on screen (never while on the Dashboard).
+        if (ui->tabWidget->currentWidget() != dashboard) {
+            updateBatteryCharge(); updateChargingStatus(); updateCpuTemp(); updateGpuTemp(); updateFanMode();
+            updateFan1Speed(); updateFan2Speed(); updateKeyboardBrightness(); updateWebCamState();
+        }
         pushDashboard();
 
-        if (operate.isMsiEcLoaded()) {
+        if (msiEcPresent()) {
             ui->MsiEcStatusLabel->setText(tr("Loaded"));
         } else {
             ui->MsiEcStatusLabel->setText(tr("Fallback: Only ec_sys is loaded"));
@@ -693,12 +702,14 @@ void MainWindow::checkFanSettingsChanged() const {
 
 void MainWindow::showEvent(QShowEvent *event) {
     startRealtimeUpdate();
+    if (sensors) QMetaObject::invokeMethod(sensors, "setFast", Qt::QueuedConnection, Q_ARG(bool, true));
     activateWindow();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
     if (trayIcon && trayIcon->isVisible()) {
         stopRealtimeUpdate();
+        if (sensors) QMetaObject::invokeMethod(sensors, "setFast", Qt::QueuedConnection, Q_ARG(bool, false));
         MainWindow::hide();
         event->ignore();
         return;
@@ -1070,29 +1081,22 @@ static int sysInt(const char *path, int def = -1) {
 }
 
 void MainWindow::pushDashboard() {
-    DashData d;
-    d.cpuTemp = operate.getCpuTemp();
-    std::optional<int> g = operate.getGpuTemp(); d.gpuTemp = g.has_value() ? g.value() : -1;
-    d.cpuFanPct = sysInt("/sys/devices/platform/msi-ec/cpu/realtime_fan_speed");
-    d.gpuFanPct = sysInt("/sys/devices/platform/msi-ec/gpu/realtime_fan_speed");
-    d.cpuFanRpm = operate.getFan1Speed();
-    std::optional<int> f2 = operate.getFan2Speed(); d.gpuFanRpm = f2.has_value() ? f2.value() : 0;
-    switch (operate.getUserMode()) {
-        case user_mode::performance_mode: d.mode = 0; break;
-        case user_mode::balanced_mode: d.mode = 1; break;
-        case user_mode::silent_mode: d.mode = 2; break;
-        case user_mode::super_battery_mode: d.mode = 3; break;
-        default: d.mode = -1;
+    // RPM comes from the cached ec_sys dump (no I/O). Everything else arrives from the sensor thread.
+    dashData.cpuFanRpm = operate.getFan1Speed();
+    std::optional<int> f2 = operate.getFan2Speed();
+    dashData.gpuFanRpm = f2.has_value() ? f2.value() : 0;
+    dashboard->setRpm(dashData.cpuFanRpm, dashData.gpuFanRpm);
+    if (!msiEcPresent()) {                                          // legacy ec_sys-only laptops: read through the old backend
+        DashData d = dashData;
+        d.cpuTemp = operate.getCpuTemp(); std::optional<int> g = operate.getGpuTemp(); d.gpuTemp = g.has_value() ? g.value() : -1;
+        switch (operate.getUserMode()) { case user_mode::performance_mode: d.mode = 0; break; case user_mode::balanced_mode: d.mode = 1; break; case user_mode::silent_mode: d.mode = 2; break; case user_mode::super_battery_mode: d.mode = 3; break; default: d.mode = -1; }
+        d.coolerBoost = operate.getCoolerBoostState(); int thr = operate.getBatteryThreshold(); d.chargeLimit = (thr <= 0 || thr > 100) ? 100 : thr;
+        dashData = d; dashboard->setData(d);
     }
-    d.coolerBoost = operate.getCoolerBoostState();
-    int thr = operate.getBatteryThreshold(); d.chargeLimit = (thr <= 0 || thr > 100) ? 100 : thr;
-    dashData = d;
-    dashboard->setData(d);
     if (trayIcon) {
-        static const char *names[] = {"Turbo", "Balanced", "Silent", "Super Battery"};
+        static const char *names[] = {"Turbo", "Balanced", "Silent", "Super Battery"}; const DashData &d = dashData;
         trayIcon->setToolTip(QString("MControlCenter\n%1  ·  CPU %2 °C%3\nFan %4 %  ·  charge limit %5 %")
-            .arg(d.mode >= 0 ? names[d.mode] : "?").arg(d.cpuTemp).arg(d.gpuTemp > 0 ? QString("  ·  GPU %1 °C").arg(d.gpuTemp) : QString())
-            .arg(d.cpuFanPct).arg(d.chargeLimit));
+            .arg(d.mode >= 0 ? names[d.mode] : "?").arg(d.cpuTemp).arg(d.gpuTemp > 0 ? QString("  ·  GPU %1 °C").arg(d.gpuTemp) : QString()).arg(d.cpuFanPct).arg(d.chargeLimit));
     }
 }
 

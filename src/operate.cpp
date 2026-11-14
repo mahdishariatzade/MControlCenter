@@ -17,6 +17,7 @@
  */
 
 #include "operate.h"
+#include <QFile>
 #include "helper.h"
 #include "msi-ec_helper.h"
 #include "settings.h"
@@ -180,7 +181,7 @@ int Operate::getFan1Speed() const {
 }
 
 std::optional<int> Operate::getFan2Speed() const {
-    if (msiEcHelper.isMsiEcModuleLoaded() && !msiEcHelper.hasGPURealtimeFanSpeed())
+    if (msiEcHelper.isMsiEcModuleLoaded() && !QFile::exists("/sys/devices/platform/msi-ec/gpu/realtime_fan_speed"))   // local check, not a blocking D-Bus call
         return std::nullopt;
     // Read 2 bytes (big-endian)
     auto value0 = helper.getOptionalValue(fan2Address);
