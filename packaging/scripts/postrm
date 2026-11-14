@@ -1,0 +1,8 @@
+#!/bin/sh
+case "$1" in
+    remove|purge|0)
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        udevadm control --reload-rules >/dev/null 2>&1 || true
+        command -v dkms >/dev/null 2>&1 && dkms remove msi-wmi-platform/1.0 --all >/dev/null 2>&1 || true ;;   # the msi-ec driver is left alone on purpose
+esac
+exit 0

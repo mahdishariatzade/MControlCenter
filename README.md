@@ -13,7 +13,9 @@ Goal: **work on every MSI laptop that msi-ec supports** (gaming series mostly). 
 <img src="docs/screenshots/settings.png" width="49%" alt="Settings">
 </p>
 
-**Install (Debian/Ubuntu/Kali tested; Fedora, Arch, openSUSE paths written, untested):**
+**Install from a package** (Releases page): `.deb` for Ubuntu 24.04+, Debian 13+ and Kali (`sudo apt install ./mcontrolcenter_*.deb`), `.rpm` for Fedora (`sudo dnf install ./mcontrolcenter-*.rpm`). They install the same files as `install.sh`, enable the boot-time driver repair and register the DKMS driver. Remove with `apt remove mcontrolcenter` / `dnf remove mcontrolcenter` (the msi-ec driver is left alone). The packages are built by CI and have not been installed on a real Fedora or Debian machine yet: please report problems.
+
+**Install from source (Debian/Ubuntu/Kali tested; Fedora, Arch, openSUSE paths written, untested):**
 
 ```bash
 git clone https://github.com/p34t1k/MControlCenter && cd MControlCenter && ./install.sh

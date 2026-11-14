@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(MControlCenter VERSION 0.5.2 LANGUAGES CXX)
+# release builds pass -DRELEASE_VERSION=<tag without v> so the app, About page and package names all agree with the git tag
+if(RELEASE_VERSION)
+    set(PROJECT_VERSION ${RELEASE_VERSION})
+endif()
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -67,3 +71,50 @@ target_link_libraries(mcontrolcenter PRIVATE
 
 target_compile_definitions(mcontrolcenter PRIVATE
     MControlCenter_VERSION="${PROJECT_VERSION}")
+
+# ───────────────────────────── install + packages (cmake --install, cpack -G DEB / RPM) ─────────────────────────────
+# Mirrors install.sh. Build packages with:  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build && (cd build && cpack)
+include(GNUInstallDirs)
+install(TARGETS mcontrolcenter RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS scripts/mcontrolcenter-doctor scripts/mcontrolcenter-gpu scripts/mcontrolcenter-battery DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/mcontrolcenter)
+install(FILES resources/mcontrolcenter.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES resources/mcontrolcenter.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES resources/mcontrolcenter.appdata.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+install(FILES src/helper/mcontrolcenter-helper.conf DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/system.d)
+install(FILES src/helper/mcontrolcenter.helper.service DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/system-services)
+install(FILES packaging/io.github.dmitry_s93.mcontrolcenter.doctor.policy packaging/io.github.dmitry_s93.mcontrolcenter.gpu.policy packaging/io.github.dmitry_s93.mcontrolcenter.battery.policy
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/actions)
+install(FILES packaging/mcontrolcenter-doctor.service packaging/mcontrolcenter-battery.service DESTINATION lib/systemd/system)
+install(FILES packaging/70-mcontrolcenter-rgb.rules packaging/71-mcontrolcenter-ddc.rules DESTINATION lib/udev/rules.d)
+install(FILES packaging/mcontrolcenter-i2c.conf DESTINATION lib/modules-load.d)
+install(FILES packaging/mcontrolcenter-autostart.desktop DESTINATION /etc/xdg/autostart RENAME mcontrolcenter.desktop)
+install(DIRECTORY packaging/msi-wmi-platform/ DESTINATION /usr/src/msi-wmi-platform-1.0)      # DKMS source, built only where the kernel has no msi-wmi-platform
+
+set(CPACK_PACKAGE_NAME "mcontrolcenter")
+set(CPACK_PACKAGE_VENDOR "p34t1k")
+set(CPACK_PACKAGE_CONTACT "MControlCenter maintainers <https://github.com/p34t1k/MControlCenter>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Control center for MSI laptops: modes, fans, battery, keyboard lighting, displays")
+set(CPACK_PACKAGE_DESCRIPTION "MControlCenter controls MSI laptops through the msi-ec kernel driver: power modes, fan curves, charge limit and automatic battery calibration, Mystic Light keyboard lighting, refresh-rate and external-monitor control. Fork of dmitry-s93/MControlCenter.")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/p34t1k/MControlCenter")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+set(CPACK_GENERATOR "DEB;RPM")
+# .deb
+set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec | policykit-1")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "dkms, build-essential")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_SOURCE_DIR}/packaging/scripts/postinst;${CMAKE_SOURCE_DIR}/packaging/scripts/prerm;${CMAKE_SOURCE_DIR}/packaging/scripts/postrm")
+# .rpm
+set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")
+set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
+set(CPACK_RPM_PACKAGE_REQUIRES "polkit")
+set(CPACK_RPM_PACKAGE_SUGGESTS "dkms, gcc, make")
+set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_SOURCE_DIR}/packaging/scripts/postinst")
+set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE "${CMAKE_SOURCE_DIR}/packaging/scripts/prerm")
+set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_SOURCE_DIR}/packaging/scripts/postrm")
+set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/usr/share/applications;/usr/libexec;/usr/src;/usr/lib/systemd;/usr/lib/systemd/system;/usr/lib/udev;/usr/lib/udev/rules.d;/usr/lib/modules-load.d;/usr/share/polkit-1;/usr/share/polkit-1/actions;/usr/share/dbus-1;/usr/share/dbus-1/system.d;/usr/share/dbus-1/system-services;/usr/share/metainfo;/usr/share/icons;/usr/share/icons/hicolor;/usr/share/icons/hicolor/scalable;/usr/share/icons/hicolor/scalable/apps;/etc/xdg;/etc/xdg/autostart")
+include(CPack)

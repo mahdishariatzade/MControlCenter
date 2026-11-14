@@ -25,3 +25,5 @@ target_link_libraries(mcontrolcenter-helper PRIVATE
   Qt6::Core
   Qt6::DBus
 )
+
+install(TARGETS mcontrolcenter-helper RUNTIME DESTINATION libexec)
