@@ -40,6 +40,7 @@ public:
     void disconnectFromPowerProfiles();
     void queryChargerState();
     void queryPowerProfile();
+    void setPowerProfile(PowerProfile profile);
 
     Q_ENUM(PowerProfile)
 

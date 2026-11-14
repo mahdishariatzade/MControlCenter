@@ -1,3 +1,17 @@
+
+## This fork: Crosshair 16 HX AI dashboard (2026-11)
+
+![dashboard](docs/screenshots/dashboard.png)
+
+- **Dashboard tab** - animated CPU/GPU temperature gauges, spinning fan dials, battery ring with charge-limit marker, 3-minute history graph, live stats (load, clock, RAM, NVMe, battery draw/health), power-mode tiles, Cooler Boost, charge-limit chips and one-touch presets (Gaming / Work / Night / Travel).
+- **Neon dark theme** for the whole app; the window is resizable (upstream caps it at 580x480).
+- **Session D-Bus API** `io.github.dmitry_s93.MControlCenter` at `/Control`: `State` (JSON), `SetMode turbo|balanced|silent|eco`, `SetCoolerBoost`, `SetChargeLimit`, `ShowWindow`.
+- **KDE integration**: two-way sync with the power-profiles-daemon slider, plus `plasma/local.battery-msi`, a Power & Battery popup with the MSI controls built in.
+- Developed and tested on an MSI Crosshair 16 HX AI (MS-15P4, EC 15P4EMS1.105) with msi-ec 0.13 on Kali Linux, Plasma 6.7. Other msi-ec laptops should degrade gracefully but are untested.
+
+Dev screenshots: `MCC_SHOT=/tmp/x QT_QPA_PLATFORM=xcb xvfb-run -a ./mcontrolcenter` (note: it applies the saved mode to the EC).
+
+---
 # MControlCenter
 
 MControlCenter is a Free and Open Source GNU/Linux application that allows you to change the settings of MSI laptops.

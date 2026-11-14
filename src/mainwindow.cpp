@@ -22,6 +22,11 @@
 #include "settings.h"
 #include <QTimer>
 #include <QMessageBox>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QFile>
+#include <QDBusConnection>
+#include "theme.h"
 
 Operate operate;
 PowerMonitor powerMonitor;
@@ -144,14 +149,34 @@ MainWindow::MainWindow(QWidget *parent)
 
     MainWindow::setWindowIcon(QIcon(":/images/AppIcon"));
     Settings s;
-    if (s.isValueExist("MainWindow/Width") && s.isValueExist("MainWindow/Height"))
+    if (s.isValueExist("MainWindow/Width") && s.isValueExist("MainWindow/Height") && s.getValue("MainWindow/Width").toInt() >= 1000)
         MainWindow::resize(s.getValue("MainWindow/Width").toInt(), s.getValue("MainWindow/Height").toInt());
+    else
+        MainWindow::resize(1100, 780);
 
     createTrayIcon();
 
+    setStyleSheet(kThemeQss);
+    dashboard = new DashboardPage(this);
+    dashboard->setMinimumSize(980, 700);
+    ui->tabWidget->insertTab(0, dashboard, tr("Dashboard"));
+    ui->tabWidget->tabBar()->setFocusPolicy(Qt::NoFocus);
+    ui->tabWidget->setTabText(1, tr("Controls"));
+    ui->tabWidget->setCurrentIndex(0);
+    connect(dashboard, &DashboardPage::modeRequested, this, &MainWindow::setModeIndex);
+    connect(dashboard, &DashboardPage::coolerBoostRequested, this, [this](bool on) { setCoolerBoostState(on); });
+    connect(dashboard, &DashboardPage::chargeLimitRequested, this, &MainWindow::setChargeLimit);
+    bridge = new ControlBridge(this);
+    bridge->stateFn = [this] { if (isActive && operate.updateEcData()) pushDashboard(); return stateJson(); };   // timer is stopped while hidden: read fresh values on demand
+    connect(bridge, &ControlBridge::modeRequested, this, &MainWindow::setModeIndex);
+    connect(bridge, &ControlBridge::coolerBoostRequested, this, [this](bool on) { setCoolerBoostState(on); });
+    connect(bridge, &ControlBridge::chargeLimitRequested, this, &MainWindow::setChargeLimit);
+    connect(bridge, &ControlBridge::showRequested, this, [this] { showNormal(); raise(); activateWindow(); });
+    QDBusConnection::sessionBus().registerObject("/Control", bridge, QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals);
+
     ui->tabWidget->tabBar()->setExpanding(true);
-    // Disable debug tab
-    ui->tabWidget->setTabVisible(5, false);
+    // Disable debug tab (index shifted by one: the Dashboard is tab 0)
+    ui->tabWidget->setTabVisible(6, false);
     setTabsEnabled(false);
 
     if (!operate.isMsiEcLoaded()) {
@@ -175,6 +200,13 @@ MainWindow::MainWindow(QWidget *parent)
     timerSleepWatcher.setInterval(10 * 1000);
     timerSleepWatcher.start();
 
+    if (const char *shot = getenv("MCC_SHOT")) {            // dev only: render every tab to PNGs and quit
+        QString prefix = QString::fromUtf8(shot); resize(1100, 760); show();
+        QTimer::singleShot(2500, this, [this, prefix] {
+                        for (int i = 0; i < ui->tabWidget->count(); ++i) { if (!ui->tabWidget->isTabVisible(i)) continue; ui->tabWidget->setCurrentIndex(i); QCoreApplication::processEvents(); grab().save(QString("%1_%2.png").arg(prefix).arg(i)); }
+            QCoreApplication::quit();
+        });
+    }
     ui->QtVersionValue->setText(QT_VERSION_STR);
     ui->versionValueLabel->setText(MControlCenter_VERSION);
     ui->autoAcDcProfilesGroupBox->setChecked(s.getValue("Settings/autoAcDcProfilesState").toBool());
@@ -192,6 +224,7 @@ void MainWindow::setUpdateDataError(bool error) {
 }
 
 void MainWindow::setTabsEnabled(bool enabled) {
+    if (dashboard) dashboard->setControlsEnabled(enabled);
     ui->overviewTab->setEnabled(enabled);
     ui->modeFormWidget->setEnabled(enabled);
     ui->batteryTab->setEnabled(enabled);
@@ -239,6 +272,7 @@ void MainWindow::updateData() {
         updateFan2Speed();
         updateKeyboardBrightness();
         updateWebCamState();
+        pushDashboard();
 
         if (operate.isMsiEcLoaded()) {
             ui->MsiEcStatusLabel->setText(tr("Loaded"));
@@ -280,7 +314,7 @@ void MainWindow::loadConfigs() {
         updateKeyboardBrightness();
     } else {
         ui->keyboardBrightnessSlider->setEnabled(false);
-        ui->tabWidget->removeTab(3);
+        ui->tabWidget->removeTab(4);
     }
 
     if (operate.isUsbPowerShareSupport()) {
@@ -549,21 +583,25 @@ void MainWindow::setBestBattery() {
 void MainWindow::setHighPerformanceMode() {
     operate.setUserMode(user_mode::performance_mode);
     updateUserMode();
+    pushCurrentModeToPPD();
 }
 
 void MainWindow::setBalancedMode() {
     operate.setUserMode(user_mode::balanced_mode);
     updateUserMode();
+    pushCurrentModeToPPD();
 }
 
 void MainWindow::setSilentMode() {
     operate.setUserMode(user_mode::silent_mode);
     updateUserMode();
+    pushCurrentModeToPPD();
 }
 
 void MainWindow::setSuperBatteryMode() {
     operate.setUserMode(user_mode::super_battery_mode);
     updateUserMode();
+    pushCurrentModeToPPD();
 }
 
 void MainWindow::setCoolerBoostState(bool enabled) const {
@@ -725,7 +763,27 @@ void MainWindow::on_ChargerStateChange(bool isCharging) {
     }
 }
 
+PowerProfile MainWindow::ppdProfileForCurrentMode() const {
+    // Silent has no PPD equivalent (same CPU shift as balanced, quieter fans)
+    const QString mode = Settings().getValue("Settings/UserMode").toString();
+    if (mode == "performance_mode")
+        return PowerProfile::Performance;
+    if (mode == "balanced_mode" || mode == "silent_mode")
+        return PowerProfile::Balanced;
+    if (mode == "super_battery_mode")
+        return PowerProfile::PowerSaver;
+    return PowerProfile::Unknown;
+}
+
+void MainWindow::pushCurrentModeToPPD() {
+    if (ui->autoPPDCheckBox->isChecked())
+        powerMonitor.setPowerProfile(ppdProfileForCurrentMode());
+}
+
 void MainWindow::on_PowerProfileChange(const PowerProfile profile) {
+    // Ignore echoes of our own push, and keep Silent when PPD reports balanced
+    if (profile == ppdProfileForCurrentMode())
+        return;
     if (ui->autoPPDCheckBox->isChecked()) {
         switch (profile) {
         case PowerProfile::Performance:
@@ -866,13 +924,10 @@ void MainWindow::on_autoPPDCheckBox_toggled(bool checked) {
         }
 
         powerMonitor.disconnectFromUpower();
-        ui->highPerformanceModeRadioButton->setEnabled(0);
-        ui->balancedModeRadioButton->setEnabled(0);
-        ui->silentModeRadioButton->setEnabled(0);
-        ui->superBatteryModeRadioButton->setEnabled(0);
         ui->autoAcDcProfilesGroupBox->setChecked(0);
         ui->autoAcDcProfilesGroupBox->setEnabled(0);
-        powerMonitor.queryPowerProfile();
+        Settings::setValue("Settings/autoPPDstate", checked);
+        pushCurrentModeToPPD();
     } else {
         ui->highPerformanceModeRadioButton->setEnabled(1);
         ui->balancedModeRadioButton->setEnabled(1);
@@ -1005,4 +1060,61 @@ void MainWindow::createActions() {
 
 void MainWindow::saveStateRequest(QSessionManager &sessionManager) {
     sessionManager.setRestartHint(QSessionManager::RestartNever);
+}
+
+static int sysInt(const char *path, int def = -1) {
+    QFile f(path); if (!f.open(QIODevice::ReadOnly)) return def;
+    bool ok; int v = QString::fromUtf8(f.readAll()).trimmed().toInt(&ok); return ok ? v : def;
+}
+
+void MainWindow::pushDashboard() {
+    DashData d;
+    d.cpuTemp = operate.getCpuTemp();
+    std::optional<int> g = operate.getGpuTemp(); d.gpuTemp = g.has_value() ? g.value() : -1;
+    d.cpuFanPct = sysInt("/sys/devices/platform/msi-ec/cpu/realtime_fan_speed");
+    d.gpuFanPct = sysInt("/sys/devices/platform/msi-ec/gpu/realtime_fan_speed");
+    d.cpuFanRpm = operate.getFan1Speed();
+    std::optional<int> f2 = operate.getFan2Speed(); d.gpuFanRpm = f2.has_value() ? f2.value() : 0;
+    switch (operate.getUserMode()) {
+        case user_mode::performance_mode: d.mode = 0; break;
+        case user_mode::balanced_mode: d.mode = 1; break;
+        case user_mode::silent_mode: d.mode = 2; break;
+        case user_mode::super_battery_mode: d.mode = 3; break;
+        default: d.mode = -1;
+    }
+    d.coolerBoost = operate.getCoolerBoostState();
+    int thr = operate.getBatteryThreshold(); d.chargeLimit = (thr <= 0 || thr > 100) ? 100 : thr;
+    dashData = d;
+    dashboard->setData(d);
+    if (trayIcon) {
+        static const char *names[] = {"Turbo", "Balanced", "Silent", "Super Battery"};
+        trayIcon->setToolTip(QString("MControlCenter\n%1  ·  CPU %2 °C%3\nFan %4 %  ·  charge limit %5 %")
+            .arg(d.mode >= 0 ? names[d.mode] : "?").arg(d.cpuTemp).arg(d.gpuTemp > 0 ? QString("  ·  GPU %1 °C").arg(d.gpuTemp) : QString())
+            .arg(d.cpuFanPct).arg(d.chargeLimit));
+    }
+}
+
+void MainWindow::setModeIndex(int mode) {
+    switch (mode) {
+        case 0: setHighPerformanceMode(); break;
+        case 1: setBalancedMode(); break;
+        case 2: setSilentMode(); break;
+        case 3: setSuperBatteryMode(); break;
+    }
+}
+
+void MainWindow::setChargeLimit(int percent) {
+    if (percent >= 100) setBestMobility();
+    else if (percent == 80) setBalancedBattery();
+    else if (percent == 60) setBestBattery();
+    else { operate.setBatteryThreshold(percent); updateBatteryThreshold(); }
+}
+
+QString MainWindow::stateJson() const {
+    static const char *modes[] = {"turbo", "balanced", "silent", "eco"};
+    QJsonObject o; const DashData &d = dashData;
+    o["mode"] = d.mode >= 0 ? modes[d.mode] : "unknown"; o["cpuTemp"] = d.cpuTemp; o["gpuTemp"] = d.gpuTemp;
+    o["cpuFanPct"] = d.cpuFanPct; o["gpuFanPct"] = d.gpuFanPct; o["cpuFanRpm"] = d.cpuFanRpm; o["gpuFanRpm"] = d.gpuFanRpm;
+    o["coolerBoost"] = d.coolerBoost; o["chargeLimit"] = d.chargeLimit;
+    return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
 }

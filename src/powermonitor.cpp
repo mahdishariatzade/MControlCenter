@@ -196,6 +196,41 @@ void PowerMonitor::onPowerProfileChanged(
     emit currentPowerProfile(profile);
 }
 
+void PowerMonitor::setPowerProfile(PowerProfile profile) {
+    if (!isPowerProfileConnected)
+        return;
+
+    QString name;
+    switch (profile) {
+        case PowerProfile::Performance:
+            name = "performance";
+            break;
+        case PowerProfile::Balanced:
+            name = "balanced";
+            break;
+        case PowerProfile::PowerSaver:
+            name = "power-saver";
+            break;
+        default:
+            return;
+    }
+
+    QDBusInterface iface(
+        "net.hadess.PowerProfiles",
+        "/org/freedesktop/UPower/PowerProfiles",
+        "org.freedesktop.DBus.Properties",
+        QDBusConnection::systemBus()
+        );
+
+    QDBusReply<QVariant> current =
+        iface.call("Get", "org.freedesktop.UPower.PowerProfiles", "ActiveProfile");
+    if (current.isValid() && current.value().toString() == name)
+        return;
+
+    iface.call("Set", "org.freedesktop.UPower.PowerProfiles", "ActiveProfile",
+               QVariant::fromValue(QDBusVariant(name)));
+}
+
 PowerProfile PowerMonitor::parsePowerProfile(const QString &profile) {
     if (profile == "performance")
         return PowerProfile::Performance;

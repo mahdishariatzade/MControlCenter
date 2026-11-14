@@ -28,6 +28,8 @@ set(PROJECT_SOURCES
     src/helper.cpp src/helper.h
     src/msi-ec_helper.cpp src/msi-ec_helper.h
     src/settings.cpp src/settings.h
+    src/dashboard.cpp src/dashboard.h src/theme.h
+    src/bridge.cpp src/bridge.h
     src/resources.qrc
 )
 

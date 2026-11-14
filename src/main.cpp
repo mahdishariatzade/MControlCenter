@@ -24,12 +24,13 @@
 int main(int argc, char *argv[]) {
     const QString serviceName = "io.github.dmitry_s93.MControlCenter";
 
-    if (QDBusConnection::sessionBus().interface()->isServiceRegistered(serviceName)) {
+    const bool shotMode = getenv("MCC_SHOT") != nullptr;
+    if (!shotMode && QDBusConnection::sessionBus().interface()->isServiceRegistered(serviceName)) {
         fprintf(stderr, "Another instance of the application is already running\n");
         return 0;
     }
 
-    if (!QDBusConnection::sessionBus().registerService(serviceName)) {
+    if (!shotMode && !QDBusConnection::sessionBus().registerService(serviceName)) {
         fprintf(stderr, "Failed to register D-Bus service\n");
         return 1;
     }

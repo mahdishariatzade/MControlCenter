@@ -25,6 +25,8 @@
 #include <QSystemTrayIcon>
 #include <QtWidgets>
 #include <QDBusPendingCallWatcher>
+#include "dashboard.h"
+#include "bridge.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -41,12 +43,21 @@ public:
 
 private:
     Ui::MainWindow *ui;
+    DashboardPage *dashboard = nullptr;
+    ControlBridge *bridge = nullptr;
+    DashData dashData;
+    void pushDashboard();
+    void setModeIndex(int mode);
+    void setChargeLimit(int percent);
+    QString stateJson() const;
 
     void setTabsEnabled(bool enabled);
     void startRealtimeUpdate() const;
     void stopRealtimeUpdate() const;
     void setUpdateInterval(int msec) const;
     void setModeFromSelection(PowerProfile profile);
+    PowerProfile ppdProfileForCurrentMode() const;
+    void pushCurrentModeToPPD();
     void realtimeUpdate();
     void loadConfigs();
 
