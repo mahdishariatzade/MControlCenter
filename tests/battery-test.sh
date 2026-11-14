@@ -50,6 +50,7 @@ echo "3) battery stops changing (stall watchdog)"; setup
 bash "$SCRIPT" run --floor=20 >/dev/null 2>&1 & P=$!
 wait_state discharging; wait_cond unplugged; touch "$T/freeze"; wait $P 2>/dev/null; rc=$?
 ok "run ended with an error" "[ $rc != 0 ]"; ok "state is aborted" '[ "$(st_of state)" = aborted ]'
+echo "  [diag] state=$(st_of state) msg=$(st_of msg)"
 ok "everything restored" 'restored'; ok "reason mentions no change" 'st_of msg | grep -qi "did not change\|no progress"'
 teardown
 
