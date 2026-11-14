@@ -44,12 +44,14 @@ private:
     QString gReason, gDriver, gPower; qint64 gA = 0, gS = 0;
 };
 
-struct ExerciseView { bool enabled = false; int interval = 1, depth = 1; bool active = false, due = false, never = true; QString last = "never", next = "—", lowest = "—"; int cap = 0, target = 40; };
+// Battery calibration the way MSI describes it (see README): auto interval from real usage, charge to 100 % first, then one real discharge.
+struct ExerciseView { bool enabled = true; int stage = 0; bool due = false, never = true; QString last = "never", next = "—", lowest = "—", usage = "still learning", rule = "every 3 months"; int cap = 0, target = 20; };
 class BatteryPage : public AnimPage {
 public:
     explicit BatteryPage(QWidget *p);
     void setExercise(const ExerciseView &v);
-    std::function<void(int, int)> onExercise;            // 0 enable(1/0), 1 interval index, 2 depth index, 3 start, 4 cancel
+    void setRecommended(int percent);                   // MSI's charge-limit recommendation for how this laptop is actually used
+    std::function<void(int, int)> onExercise;            // 0 enable(1/0), 3 start, 4 cancel
     void setLimit(int percent, bool supported);
     void setHealth(const QString &status, const QString &health, const QString &cycles, const QString &draw, const QString &eta, int cap);
     std::function<void(int)> onLimit;

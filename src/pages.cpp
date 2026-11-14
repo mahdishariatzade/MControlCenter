@@ -28,7 +28,7 @@ static std::vector<QString> modeNames() { return {"Turbo", "Balanced", "Silent",
 class ChargePanel : public Panel {
 public:
     ChargePanel(QWidget *p) : Panel("01", "CHARGE LIMIT", p) { setMinimumHeight(300); }
-    int limit = 100, drag = -1; bool supported = true; std::function<void(int)> onCommit;
+    int limit = 100, drag = -1, recommended = 0; bool supported = true; std::function<void(int)> onCommit;
     void setValue(int v) { if (drag < 0) limit = v; }
 protected:
     QRectF track; QRectF chips[3];
@@ -55,12 +55,13 @@ protected:
         double hx = track.left() + f * track.width(); p.setPen(QPen(gAccent, 3)); p.drawLine(QPointF(hx, track.top() - 10), QPointF(hx, track.bottom() + 10));
         p.setBrush(gAccent); p.setPen(Qt::NoPen); QPolygonF tri; tri << QPointF(hx - 6, track.top() - 18) << QPointF(hx + 6, track.top() - 18) << QPointF(hx, track.top() - 8); p.drawPolygon(tri);
         p.setFont(fnt(MONO, 10)); p.setPen(kDim); for (int v : {30, 40, 60, 80, 100}) { double x = track.left() + (v - 30) / 70.0 * track.width(); p.drawText(QRectF(x - 20, track.bottom() + 14, 40, 14), Qt::AlignCenter, QString::number(v)); }
-        const int pv[3] = {60, 80, 100}; const char *nm[3] = {"BEST BATTERY", "BALANCED", "FULL CAPACITY"}; double cw = (b.width() - 12) / 3;
+        const int pv[3] = {60, 80, 100}; const char *nm[3] = {"BEST FOR BATTERY", "BALANCED", "BEST FOR MOBILITY"}; double cw = (b.width() - 12) / 3;
         for (int i = 0; i < 3; ++i) {
             chips[i] = QRectF(b.left() + i * (cw + 6), b.bottom() - 46, cw, 46); bool on = limit == pv[i];
             p.setPen(QPen(on ? gAccent : kLine, 1)); p.setBrush(on ? gAccent : QBrush(Qt::NoBrush)); p.drawPath(chamfer(chips[i], 9));
             p.setFont(fnt(RAJ, 22, QFont::Bold, 1)); p.setPen(on ? kBg : (supported ? kText : kDim)); p.drawText(QRectF(chips[i].left() + 14, chips[i].top() + 4, cw, 24), Qt::AlignLeft | Qt::AlignVCenter, QString("%1 %").arg(pv[i]));
             p.setFont(fnt(MONO, 9, QFont::Normal, 1)); p.setPen(on ? alpha(kBg, 0.75) : kDim); p.drawText(QRectF(chips[i].left() + 14, chips[i].top() + 27, cw, 14), Qt::AlignLeft | Qt::AlignVCenter, nm[i]);
+            if (recommended == pv[i]) { p.setFont(fnt(MONO, 8, QFont::Medium, 1)); p.setPen(on ? kBg : gAccent); p.drawText(QRectF(chips[i].left(), chips[i].top() + 5, cw - 10, 12), Qt::AlignRight, "MSI RECOMMENDS"); }
         }
     }
 };
@@ -71,34 +72,34 @@ BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
     scroll->setStyleSheet("QScrollArea { background: transparent; border: none; } QScrollArea > QWidget > QWidget { background: transparent; }");
     auto *content = new QWidget; scroll->setWidget(content); outer->addWidget(scroll);
     auto *grid = new QGridLayout(content); grid->setContentsMargins(18, 16, 18, 16); grid->setSpacing(10);
-    charge = new ChargePanel(content); info = new RowsPanel("02", "BATTERY", content); exercise = new RowsPanel("03", "BATTERY EXERCISE", content);
+    charge = new ChargePanel(content); info = new RowsPanel("02", "BATTERY", content); exercise = new RowsPanel("03", "BATTERY CALIBRATION", content);
     charge->onCommit = [this](int v) { if (onLimit) onLimit(v); };
     charge->setFixedHeight(300);
     grid->addWidget(charge, 0, 0); grid->addWidget(info, 0, 1); grid->addWidget(exercise, 1, 0, 1, 2); grid->setColumnStretch(0, 3); grid->setColumnStretch(1, 2); grid->setRowStretch(2, 1);
     adopt(charge, 0.0); adopt(info, 0.1); adopt(exercise, 0.2);
     for (auto [l, k] : std::vector<std::pair<QString, int>>{{"Status", 0}, {"Charge", 1}, {"Health", 2}, {"Cycles", 3}, {"Draw", 4}, {"Time", 5}}) { Row r; r.type = Row::Info; r.label = l; info->rows.push_back(r); (void) k; }
     Row g; g.type = Row::Gap; info->rows.push_back(g);
-    Row t; t.type = Row::Text; t.label = "Tip: 60 % is the kindest setting for a laptop that lives on its charger. Choose 100 % before a trip. Changes apply instantly."; info->rows.push_back(t); info->relayout();
+    Row t; t.type = Row::Text; t.label = "MSI recommends its \"Best for Battery\" setting (60 %) when the laptop is mostly used plugged in, \"Balanced\" (80 %) in between, and \"Best for Mobility\" (100 %) for frequent battery use. The tag above follows how you really use yours. Changes apply instantly."; info->rows.push_back(t); info->relayout();
 
-    // battery exercise: remind me to run one real discharge/recharge cycle now and then
-    { Row r; r.type = Row::Switch; r.label = "Remind me to exercise the battery"; r.sub = "A battery that never moves from one level slowly loses accuracy"; r.click = [this] { if (onExercise) onExercise(0, exercise->rows[0].on ? 0 : 1); }; exercise->rows.push_back(r); }
-    { Row r; r.type = Row::Segment; r.label = "How often"; r.opts = {"Every 2 weeks", "Monthly", "Every 2 months"}; r.pick = [this](int i) { if (onExercise) onExercise(1, i); }; exercise->rows.push_back(r); }
-    { Row r; r.type = Row::Segment; r.label = "Discharge down to"; r.opts = {"50 %", "40 %", "30 %"}; r.pick = [this](int i) { if (onExercise) onExercise(2, i); }; exercise->rows.push_back(r); }
-    for (const char *l : {"Last exercise", "Next due", "Lowest in 30 days"}) { Row r; r.type = Row::Info; r.label = l; exercise->rows.push_back(r); }
+    // battery calibration, following MSI's published guidance (no questions asked: interval and target come from MSI + your real usage)
+    { Row r; r.type = Row::Switch; r.label = "Keep my battery calibrated"; r.sub = "MSI's recommendation, applied automatically"; r.click = [this] { if (onExercise) onExercise(0, exercise->rows[0].on ? 0 : 1); }; exercise->rows.push_back(r); }
+    for (const char *l : {"Your usage", "MSI recommends", "Last calibration", "Next due", "Lowest in 30 days"}) { Row r; r.type = Row::Info; r.label = l; exercise->rows.push_back(r); }
     { Row r; r.type = Row::Text; r.accent = true; exercise->rows.push_back(r); }
-    { Row r; r.type = Row::Button; r.label = "Start guided exercise"; r.accent = true; r.click = [this] { if (onExercise) onExercise(exercise->rows[7].label.startsWith("Cancel") ? 4 : 3, 0); }; exercise->rows.push_back(r); }
-    { Row r; r.type = Row::Text; r.label = "How it works: this laptop cannot discharge its battery while the charger is plugged in, so an exercise means unplugging once and using it normally until it reaches the level above. Then plug in: it recharges to your normal limit. If you happen to run on battery that far on your own, it counts automatically."; exercise->rows.push_back(r); }
+    { Row r; r.type = Row::Button; r.label = "Start calibration"; r.accent = true; r.click = [this] { if (onExercise) onExercise(exercise->rows[7].label.startsWith("Cancel") ? 4 : 3, 0); }; exercise->rows.push_back(r); }
+    { Row r; r.type = Row::Text; r.label = "Why: the battery's built-in gauge slowly loses track of its real capacity, especially when it sits at one level. MSI's own tool fixes that with a full charge, then a discharge, with the charger connected. This laptop cannot discharge while plugged in, so you do the discharge: the app charges to 100 %, tells you when to unplug, then when to plug back in at 20 %, and restores your normal limit. No memory effect: you never need to do this for any other reason. Storing the laptop for a long time? MSI suggests about 40 % charge and an EC reset."; exercise->rows.push_back(r); }
     exercise->relayout();
 }
+void BatteryPage::setRecommended(int percent) { if (charge->recommended != percent) { charge->recommended = percent; charge->update(); } }
 void BatteryPage::setExercise(const ExerciseView &v) {
-    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11").arg(v.enabled).arg(v.interval).arg(v.depth).arg(v.active).arg(v.due).arg(v.last, v.next, v.lowest).arg(v.cap).arg(v.target).arg(v.never);
+    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11").arg(v.enabled).arg(v.stage).arg(v.due).arg(v.never).arg(v.last, v.next, v.lowest).arg(v.usage, v.rule).arg(v.cap).arg(v.target);
     if (sig == exSig) return; exSig = sig;                       // only touch the layout when something visible changed
-    auto &R = exercise->rows; R[0].on = v.enabled; for (int i : {1, 2, 3, 4, 5, 6, 7}) R[i].visible = v.enabled; R[1].sel = v.interval; R[2].sel = v.depth;
-    R[3].value = v.last; R[4].value = v.next; R[5].value = v.lowest;
-    R[6].label = v.active ? QString("EXERCISE IN PROGRESS: unplug the charger and keep working. Now %1 %, target %2 %. I will tell you when to plug back in.").arg(v.cap).arg(v.target)
-                          : v.due ? QString("DUE NOW: whenever it suits you, unplug the charger and use the laptop down to %1 %.").arg(v.target)
-                          : v.never ? QString("No exercise done yet. Tracking has started: the first reminder comes on %1.").arg(v.next) : QString("All good: the last exercise was %1, the next is due %2.").arg(v.last, v.next);
-    R[7].label = v.active ? "Cancel exercise" : "Start guided exercise"; R[7].accent = !v.active;
+    auto &R = exercise->rows; R[0].on = v.enabled; for (int i = 1; i <= 8; ++i) R[i].visible = v.enabled;
+    R[1].value = v.usage; R[2].value = v.rule; R[3].value = v.last; R[4].value = v.next; R[5].value = v.lowest;
+    R[6].label = v.stage == 1 ? QString("STEP 1 OF 2 · CHARGING TO 100 %: keep the charger connected. Now %1 %. I will tell you when to unplug.").arg(v.cap)
+               : v.stage == 2 ? QString("STEP 2 OF 2 · DISCHARGING: unplug the charger and use the laptop normally. Now %1 %. I will tell you when to plug back in (at %2 %).").arg(v.cap).arg(v.target)
+               : v.due ? QString("CALIBRATION DUE: when it suits you, press Start. It takes one charge and one normal day of use.")
+               : v.never ? QString("Nothing to do yet. Tracking has started: the first reminder comes on %1.").arg(v.next) : QString("All good. Next calibration is due %1.").arg(v.next);
+    R[7].label = v.stage ? "Cancel calibration" : "Start calibration"; R[7].accent = !v.stage;
     exercise->relayout(); exercise->update(); kick();
 }
 void BatteryPage::setLimit(int percent, bool supported) { charge->supported = supported; charge->setValue(percent); charge->update(); }
@@ -247,6 +248,8 @@ AboutPage::AboutPage(QWidget *p) : AnimPage(p) {
     text("msi-ec by BeardOverflow and contributors (github.com/BeardOverflow/msi-ec) is what makes all of this possible.");
     gap(); text("KEYBOARD LIGHTING PROTOCOL", true);
     text("MSI MysticLight reverse engineering by natanalt, and the community projects mystickeys, msi-mysticlight-controller-linux and OpenRGB, whose published findings this independent implementation builds on.");
+    gap(); text("BATTERY GUIDANCE", true);
+    text("Charge-limit names, the calibration interval (every 3 months when mostly plugged in, monthly otherwise) and the storage tip follow MSI's own support pages (msi.com: Laptop Battery; Perform Battery Calibration).");
     gap(); text("FONTS", true);
     text("Rajdhani (Indian Type Foundry) and IBM Plex Mono (IBM), both SIL Open Font License 1.1.");
     gap(); text("MSI and Micro-Star International are trademarks of their owners. This project is community-made and not affiliated with or endorsed by MSI.");

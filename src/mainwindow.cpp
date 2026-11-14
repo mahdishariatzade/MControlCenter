@@ -1440,57 +1440,85 @@ void MainWindow::rgbReset() {
     QMetaObject::invokeMethod(rgb, "reloadStored", Qt::QueuedConnection);
 }
 
-// ───────────────────────────── battery exercise ─────────────────────────────
-static const int kExDays[3] = {14, 30, 60}, kExDepth[3] = {50, 40, 30};
+// ───────────────────────────── battery calibration (MSI's published guidance) ─────────────────────────────
+// MSI (Laptop Battery support page, FAQ "Perform Battery Calibration"): calibrate every 3 months if the laptop is mostly used plugged in, monthly if it is used
+// on the go or split about evenly between battery and AC; select "Best for Mobility" (100 %) first; Best for Battery (60 %) suits mostly-AC use, Balanced (80 %)
+// the middle, Best for Mobility (100 %) frequent battery use. The interval and the recommended limit are therefore derived from measured usage.
+static const int kCalTarget = 20;                                  // MSI's tool discharges fully on its own; for a guided manual run 20 % is the lowest sensible level
 static qint64 secsNow() { return QDateTime::currentSecsSinceEpoch(); }
 
+double MainWindow::acShare() const { const double t = exAcSec + exBatSec; return t < 86400 ? -1 : exAcSec / t; }          // -1: not enough data yet (under a day tracked)
+int MainWindow::calIntervalDays() const { const double s = acShare(); return (s < 0 || s >= 0.65) ? 90 : 30; }
+int MainWindow::recommendedLimit() const { const double s = acShare(); return (s < 0 || s >= 0.65) ? 60 : s >= 0.35 ? 80 : 100; }
+
 void MainWindow::exerciseLoad() {
-    Settings s; exEnabled = s.getValue("Battery/exercise").toBool(); exActive = s.getValue("Battery/active").toBool();
-    exInterval = s.isValueExist("Battery/interval") ? qBound(0, s.getValue("Battery/interval").toInt(), 2) : 1; exDepth = s.isValueExist("Battery/depth") ? qBound(0, s.getValue("Battery/depth").toInt(), 2) : 1;
-    exLast = s.getValue("Battery/last").toLongLong(); exSince = s.getValue("Battery/since").toLongLong();
-    if (exLast && !exSince) { exSince = exLast; exLast = 0; }                       // v1 wrongly stored the day tracking started as "last exercise": move it where it belongs
-    exLow = s.isValueExist("Battery/low") ? s.getValue("Battery/low").toInt() : 100; exLowAt = s.getValue("Battery/lowAt").toLongLong();
+    Settings s; exEnabled = s.isValueExist("Cal/enabled") ? s.getValue("Cal/enabled").toBool() : true;
+    exStage = s.getValue("Cal/stage").toInt(); exOrigLimit = s.isValueExist("Cal/origLimit") ? s.getValue("Cal/origLimit").toInt() : 60; exStageAt = s.getValue("Cal/stageAt").toLongLong();
+    exLast = s.getValue("Cal/last").toLongLong(); exSince = s.getValue("Cal/since").toLongLong(); if (!exSince) { exSince = secsNow(); }
+    exLow = s.isValueExist("Cal/low") ? s.getValue("Cal/low").toInt() : 100; exLowAt = s.getValue("Cal/lowAt").toLongLong();
+    exAcSec = s.getValue("Cal/acSec").toDouble(); exBatSec = s.getValue("Cal/batSec").toDouble();
+    Settings::setValue("Cal/since", qlonglong(exSince));
 }
 void MainWindow::exerciseSave() {
-    Settings::setValue("Battery/exercise", exEnabled); Settings::setValue("Battery/active", exActive); Settings::setValue("Battery/interval", exInterval); Settings::setValue("Battery/depth", exDepth);
-    Settings::setValue("Battery/last", qlonglong(exLast)); Settings::setValue("Battery/since", qlonglong(exSince)); Settings::setValue("Battery/low", exLow); Settings::setValue("Battery/lowAt", qlonglong(exLowAt));
+    Settings::setValue("Cal/enabled", exEnabled); Settings::setValue("Cal/stage", exStage); Settings::setValue("Cal/origLimit", exOrigLimit); Settings::setValue("Cal/stageAt", qlonglong(exStageAt));
+    Settings::setValue("Cal/last", qlonglong(exLast)); Settings::setValue("Cal/since", qlonglong(exSince)); Settings::setValue("Cal/low", exLow); Settings::setValue("Cal/lowAt", qlonglong(exLowAt));
+    Settings::setValue("Cal/acSec", exAcSec); Settings::setValue("Cal/batSec", exBatSec); exLastSave = secsNow();
 }
 ExerciseView MainWindow::exerciseView() const {
-    ExerciseView v; v.enabled = exEnabled; v.interval = exInterval; v.depth = exDepth; v.active = exActive; v.cap = rgbBattery; v.target = kExDepth[exDepth];
-    v.never = exLast == 0; v.last = exLast ? QDateTime::fromSecsSinceEpoch(exLast).toString("d MMM yyyy") : QString("never");
-    const qint64 base = exLast ? exLast : (exSince ? exSince : secsNow());                       // the clock runs from the last REAL exercise, or from when tracking was switched on
-    const qint64 due = base + kExDays[exInterval] * 86400LL; v.next = QDateTime::fromSecsSinceEpoch(due).toString("d MMM yyyy"); v.due = exEnabled && secsNow() >= due;
+    ExerciseView v; v.enabled = exEnabled; v.stage = exStage; v.cap = rgbBattery; v.target = kCalTarget; v.never = exLast == 0;
+    v.last = exLast ? QDateTime::fromSecsSinceEpoch(exLast).toString("d MMM yyyy") : QString("never");
+    const int days = calIntervalDays(); const qint64 base = exLast ? exLast : exSince; const qint64 due = base + days * 86400LL;
+    v.next = QDateTime::fromSecsSinceEpoch(due).toString("d MMM yyyy"); v.due = exEnabled && secsNow() >= due;
     v.lowest = (exLowAt && secsNow() - exLowAt < 30 * 86400LL) ? QString("%1 %").arg(exLow) : QString("no discharge yet");
+    const double sh = acShare();
+    v.usage = sh < 0 ? QString("still learning (needs a day of data)") : QString("%1 % plugged in · %2").arg(int(sh * 100 + 0.5)).arg(sh >= 0.65 ? "mostly on the charger" : sh >= 0.35 ? "a mix of both" : "mostly on battery");
+    v.rule = days == 90 ? QString("every 3 months (mostly plugged in)") : QString("monthly (you use the battery a lot)");
     return v;
 }
 void MainWindow::exerciseAction(int what, int value) {
     const qint64 now = secsNow();
+    auto restore = [this] { setChargeLimit(exOrigLimit); };                                   // always hand the charge limit back to what the user had
     switch (what) {
-        case 0: exEnabled = value != 0; if (exEnabled && !exSince) exSince = now; if (!exEnabled) exActive = false; break;       // tracking starts when the feature is switched on; this is NOT an exercise
-        case 1: exInterval = qBound(0, value, 2); break;
-        case 2: exDepth = qBound(0, value, 2); break;
-        case 3: exActive = true; exWarnedNear = exWarnedLow = false;
-                if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery exercise started. Unplug the charger and use the laptop normally. I will tell you at %1 %.").arg(kExDepth[exDepth]), QSystemTrayIcon::Information, 8000); break;
-        case 4: exActive = false; break;
+        case 0: exEnabled = value != 0; if (!exEnabled && exStage) { exStage = 0; restore(); } break;
+        case 3:                                                                               // MSI: "select Best for Mobility before starting" -> charge to 100 % first
+            if (exStage) break; exOrigLimit = dashData.chargeLimit > 0 && dashData.chargeLimit <= 100 ? dashData.chargeLimit : 60; exStageAt = now; exWarnedNear = exWarnedLow = false;
+            setChargeLimit(100); exStage = rgbBattery >= 99 ? 2 : 1;
+            if (trayIcon) trayIcon->showMessage("MControlCenter", exStage == 1 ? tr("Calibration step 1 of 2: charging to 100 %. Keep the charger connected; I will tell you when to unplug.") : tr("Calibration step 2 of 2: already full. Unplug the charger and use the laptop normally."), QSystemTrayIcon::Information, 9000);
+            break;
+        case 4: if (exStage) { exStage = 0; restore(); } break;
     }
     exerciseSave(); batteryPage->setExercise(exerciseView());
 }
-// Called once per sensor snapshot: records how deep the battery really went, and nudges only when a cycle is genuinely overdue.
+// Once per sensor snapshot: learn the real usage pattern, track the lowest level, drive the two-step calibration, remind only when it is genuinely due.
 void MainWindow::batteryExercise(const Snapshot &sn) {
-    if (sn.cap <= 0) return; const qint64 now = secsNow(); const bool onBat = sn.status == "Discharging";
-    if (onBat && (exLowAt == 0 || now - exLowAt > 30 * 86400LL || sn.cap < exLow)) { exLow = sn.cap; exLowAt = now; exerciseSave(); }          // lowest level reached in the last 30 days
-    if (exEnabled) {
-        const int depth = kExDepth[exDepth];
-        if (onBat && sn.cap <= depth && (exActive || now - exLast > 6 * 3600)) {                                                              // done: guided, or you simply ran it down yourself
-            exLast = now; exActive = false; exerciseSave();
-            if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery exercise complete: it reached %1 %. Plug the charger in; it will recharge to your normal limit.").arg(sn.cap), QSystemTrayIcon::Information, 10000);
-        } else if (exActive && onBat && sn.cap <= depth + 8 && !exWarnedNear) { exWarnedNear = true; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Almost there: %1 %. Keep going to %2 %.").arg(sn.cap).arg(depth), QSystemTrayIcon::Information, 6000); }
-        else if (onBat && sn.cap <= 15 && !exWarnedLow) { exWarnedLow = true; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery at %1 %: plug the charger in now.").arg(sn.cap), QSystemTrayIcon::Warning, 10000); }
-        else if (!onBat) exWarnedLow = false;
-        const qint64 base = exLast ? exLast : exSince;
-        if (!exActive && base && now >= base + kExDays[exInterval] * 86400LL && sn.ac && now - exLastNotify > 86400) {                    // overdue: one gentle reminder a day, only while plugged in
-            exLastNotify = now; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery exercise is due. Whenever it suits you, unplug and use the laptop down to %1 %. Open Battery to start a guided run.").arg(depth), QSystemTrayIcon::Information, 10000);
-        }
+    const qint64 now = secsNow(); const bool onBat = sn.status == "Discharging";
+    if (sn.cap <= 0) return;
+    // 1) usage learning: seconds plugged in vs on battery, exponentially forgotten (half-life about a week), saved at most every 5 minutes
+    const double dt = exLastTick ? qBound(0.0, double(now - exLastTick), 30.0) : 0; exLastTick = now;
+    if (dt > 0) { const double k = exp(-dt / (10 * 86400.0)); exAcSec *= k; exBatSec *= k; (onBat ? exBatSec : exAcSec) += dt; }
+    if (onBat && (exLowAt == 0 || now - exLowAt > 30 * 86400LL || sn.cap < exLow)) { exLow = sn.cap; exLowAt = now; exerciseSave(); }       // lowest level in the last 30 days
+    else if (now - exLastSave > 300) exerciseSave();
+    batteryPage->setRecommended(recommendedLimit());
+    if (!exEnabled) { batteryPage->setExercise(exerciseView()); return; }
+    auto done = [&] {
+        exLast = now; exStage = 0; setChargeLimit(exOrigLimit); exerciseSave();
+        if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Calibration complete: the battery reached %1 %. Plug the charger in; it recharges to your normal %2 % limit.").arg(sn.cap).arg(exOrigLimit), QSystemTrayIcon::Information, 12000); };
+    if (exStage == 1) {
+        if (sn.cap >= 99 || sn.status == "Full") { exStage = 2; exStageAt = now; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Fully charged. Calibration step 2 of 2: unplug the charger and use the laptop normally. I will tell you at %1 %.").arg(kCalTarget), QSystemTrayIcon::Information, 12000); }
+        else if (onBat && sn.cap >= 90) { exStage = 2; exStageAt = now; exerciseSave(); }                        // you already unplugged near full: go straight on
+        else if (now - exStageAt > 24 * 3600LL) { exStage = 0; setChargeLimit(exOrigLimit); exerciseSave(); }   // never reached 100 % within a day: stand down, give the limit back
+    } else if (exStage == 2) {
+        if (onBat && sn.cap <= kCalTarget) done();
+        else if (onBat && sn.cap <= kCalTarget + 8 && !exWarnedNear) { exWarnedNear = true; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Almost there: %1 %. Keep going to %2 %.").arg(sn.cap).arg(kCalTarget), QSystemTrayIcon::Information, 6000); }
+        else if (now - exStageAt > 7 * 86400LL) { exStage = 0; setChargeLimit(exOrigLimit); exerciseSave(); }   // abandoned for a week: stand down
+    } else if (onBat && sn.cap <= kCalTarget && now - exLast > 6 * 3600LL) {                                 // you ran it down on your own: that counts too
+        done();
+    }
+    if (onBat && sn.cap <= 15 && !exWarnedLow) { exWarnedLow = true; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery at %1 %: plug the charger in now.").arg(sn.cap), QSystemTrayIcon::Warning, 10000); }
+    else if (!onBat) exWarnedLow = false;
+    const qint64 base = exLast ? exLast : exSince;
+    if (!exStage && now >= base + calIntervalDays() * 86400LL && sn.ac && now - exLastNotify > 86400) {                // overdue: one gentle reminder a day, only while plugged in
+        exLastNotify = now; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery calibration is due (MSI recommends it %1). Open Battery > Start calibration when it suits you.").arg(calIntervalDays() == 90 ? tr("every 3 months when mostly plugged in") : tr("monthly when you use the battery a lot")), QSystemTrayIcon::Information, 10000);
     }
     batteryPage->setExercise(exerciseView());
 }
