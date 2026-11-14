@@ -35,6 +35,7 @@ set(PROJECT_SOURCES
     src/keyboard.cpp src/keyboard.h
     src/lighting.cpp
     src/ddc.cpp src/ddc.h src/displays.cpp src/displays.h
+    src/appprofiles.cpp src/appprofiles.h
     src/bridge.cpp src/bridge.h
     src/resources.qrc
 )

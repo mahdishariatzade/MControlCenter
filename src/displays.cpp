@@ -73,6 +73,10 @@ void PanelRefresh::setHzIndex(int i) {
     if (!curW) { const QStringList w = res.split(QString::fromUtf8(" × ")); if (w.size() == 2) { curW = w[0].toInt(); curH = w[1].toInt(); } }
     for (const Mode &m : modes) if (m.w == curW && m.h == curH && int(std::lround(m.hz)) == hz[i]) { setMode(m.id); return; }
 }
+void PanelRefresh::setHzValue(int want) {
+    if (!ok) return; int idx = hz.size() - 1; if (want > 0) { int best = 1 << 30; for (int i = 0; i < hz.size(); ++i) if (qAbs(hz[i] - want) < best) { best = qAbs(hz[i] - want); idx = i; } }
+    if (idx != current) setHzIndex(idx);
+}
 void PanelRefresh::applyForPower(bool onCharger) {
     if (!ok) { pendingPower = onCharger ? 1 : 0; refresh(); return; }
     const int target = onCharger ? hz.last() : (hz.contains(60) ? 60 : hz.first());

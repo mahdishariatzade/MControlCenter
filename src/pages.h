@@ -46,18 +46,22 @@ private:
 };
 
 // Battery calibration the way MSI describes it (see README): auto interval from real usage, charge to 100 % first, then one real discharge.
+#include <QDate>
+struct HistPoint { QDate day; double health = 0; int cycles = 0; };
+struct HistEvent { QDate day; QString label; };
 struct ExerciseView { bool enabled = true; int stage = 0; bool due = false, never = true; QString last = "never", next = "—", lowest = "—", usage = "still learning", rule = "every 3 months"; int cap = 0, target = 20; bool autoRun = false; };
 class BatteryPage : public AnimPage {
 public:
     explicit BatteryPage(QWidget *p);
     void setExercise(const ExerciseView &v);
+    void setHistory(const QVector<HistPoint> &pts, const QVector<HistEvent> &ev, const QString &note);
     void setRecommended(int percent);                   // MSI's charge-limit recommendation for how this laptop is actually used
     std::function<void(int, int)> onExercise;            // 0 enable(1/0), 3 start, 4 cancel
     void setLimit(int percent, bool supported);
     void setHealth(const QString &status, const QString &health, const QString &cycles, const QString &draw, const QString &eta, int cap);
     std::function<void(int)> onLimit;
 private:
-    ChargePanel *charge; kit::RowsPanel *info, *exercise; QString exSig;
+    ChargePanel *charge; kit::RowsPanel *info, *exercise; kit::Panel *history; QString exSig;
 };
 
 class FanPage : public AnimPage {
@@ -99,7 +103,8 @@ private:
 class SettingsPage : public AnimPage {
 public:
     explicit SettingsPage(QWidget *p);
-    enum Item { Autostart, ThermalAlert, ThermalLevel, GameMode, ExportCsv };
+    enum Item { Autostart, ThermalAlert, ThermalLevel, GameMode, ExportCsv, AppProfiles, AppProfilesEdit };
+    void setAppProfiles(bool on, int rules);
     void setState(bool autostart, bool thermal, int thermalIdx, bool gameMode, bool gameAvailable);
     std::function<void(Item, int)> onChange;
 private:

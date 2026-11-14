@@ -1221,6 +1221,21 @@ void MainWindow::checkDriver() {
     else dashboard->setProblem(tr("The msi-ec driver is not loaded. Reinstall MControlCenter with install.sh to set up the driver and automatic repair after kernel updates."), QString());
 }
 
+// ── battery health history: one row a day (D) + one per calibration (C), plain CSV in the app data folder ──
+static QString historyFile() { const QString d = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation); QDir().mkpath(d); return d + "/battery-history.csv"; }
+void MainWindow::historyLoad() {
+    histLoaded = true; histPts.clear(); histEv.clear(); histNote.clear(); histLast = QDate();
+    QFile f(historyFile()); if (f.open(QIODevice::ReadOnly)) while (!f.atEnd()) {
+        const QStringList c = QString::fromUtf8(f.readLine()).trimmed().split(',');
+        if (c.size() >= 4 && c[0] == "D") { const QDate d = QDate::fromString(c[1], Qt::ISODate); if (d.isValid()) { histPts.append({d, c[2].toDouble(), c[3].toInt()}); histLast = d; } }
+        else if (c.size() >= 5 && c[0] == "C") { const QDate d = QDate::fromString(c[1], Qt::ISODate); if (!d.isValid()) continue; histEv.append({d, "calibrated"});
+            const double a = c[3].toDouble() / 1000, b = c[4].toDouble() / 1000;
+            histNote = a > 0 && b > 0 ? tr("Last calibration %1: reported full capacity %2 -> %3 mAh (%4%5)").arg(d.toString("d MMM")).arg(a, 0, 'f', 0).arg(b, 0, 'f', 0).arg(b >= a ? "+" : "").arg(b - a, 0, 'f', 0) : tr("Last calibration %1").arg(d.toString("d MMM")); }
+    }
+    if (batteryPage) batteryPage->setHistory(histPts, histEv, histNote);
+}
+void MainWindow::historyAppend(const QString &row) { QFile f(historyFile()); if (f.open(QIODevice::Append)) { f.write(row.toUtf8() + "\n"); } historyLoad(); }
+
 void MainWindow::restoreCharger() {
     dashboard->setProblem(tr("Restoring the charger state and your charge limit..."), QString());
     auto *pr = new QProcess(this);
@@ -1273,6 +1288,22 @@ void MainWindow::buildPages() {
     lightingPage->setChosen(rgbChosen); lightingPage->setProfile(rgbUser); lightingPage->setFollow(rgbFollowMode, rgbFlashThermal, rgbPulseLow, rgbOffOnLock);
     ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->debugTab));
     settingsPage->onChange = [this](SettingsPage::Item w, int v) { settingChanged(w, v); };
+    appProfiles = new AppProfiles(this); appProfiles->load();
+    connect(appProfiles, &AppProfiles::activated, this, [this](AppRule r) {
+        if (gameActive) return;                                            // GameMode owns the mode while a game runs
+        if (!appActive) { appActive = true; appSavedMode = dashData.mode; appSavedBoost = dashData.coolerBoost ? 1 : 0; }
+        if (r.mode >= 0) setModeIndex(r.mode);
+        if (r.boost >= 0) setCoolerBoostState(r.boost == 1);
+        if (r.hz >= 0) { appHzHold = true; panelRefresh->setHzValue(r.hz); }
+        if (trayIcon) trayIcon->showMessage("MControlCenter", tr("%1 is running: app profile applied.").arg(r.proc), QSystemTrayIcon::Information, 3000);
+    });
+    connect(appProfiles, &AppProfiles::deactivated, this, [this] {
+        if (!appActive) return; appActive = false;
+        if (appSavedMode >= 0 && !gameActive) setModeIndex(appSavedMode);
+        if (appSavedBoost >= 0 && !gameActive) setCoolerBoostState(appSavedBoost == 1);
+        if (appHzHold) { appHzHold = false; if (autoRefresh && lastAcState >= 0) panelRefresh->applyForPower(lastAcState == 1); }
+        if (trayIcon) trayIcon->showMessage("MControlCenter", tr("App closed: back to your previous settings."), QSystemTrayIcon::Information, 3000);
+    });
     connect(&gameTimer, &QTimer::timeout, this, &MainWindow::gameModeTick); gameTimer.setInterval(5000);
     if (Settings().getValue("Settings/gameMode").toBool()) gameTimer.start();
     syncSettingsPage();
@@ -1288,7 +1319,7 @@ void MainWindow::buildPages() {
     controlsPage->onReboot = [] { QDBusInterface("org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", QDBusConnection::systemBus()).call("Reboot", true); };
     batteryPage->onLimit = [this](int v) { setChargeLimit(v); };
     batteryPage->onExercise = [this](int what, int value) { exerciseAction(what, value); };
-    exerciseLoad(); batteryPage->setExercise(exerciseView());
+    exerciseLoad(); batteryPage->setExercise(exerciseView()); historyLoad();
     fanPage->onAdvanced = [this](bool on) { ui->advancedFanControlCheckBox->setChecked(on); fanPage->setAdvanced(on); };
     fanPage->onCurveEdited = [this](int fan, const QVector<int> &sp, const QVector<int> &tp) { writeFanToUi(fan, sp, tp); };
     fanPage->onApply = [this] { ui->fanSpeedApplyButton->click(); syncFanEditor(); };
@@ -1298,7 +1329,7 @@ void MainWindow::buildPages() {
 
 void MainWindow::panelRefreshSync() { if (displaysPage && panelRefresh) displaysPage->setLaptop(panelRefresh->res, panelRefresh->hz, panelRefresh->current, autoRefresh, panelRefresh->available); }
 // Called when the power source changes (and once at start): the laptop panel runs at its highest rate on the charger and 60 Hz on battery.
-void MainWindow::powerSourceChanged(bool onCharger) { if (autoRefresh && panelRefresh) panelRefresh->applyForPower(onCharger); }
+void MainWindow::powerSourceChanged(bool onCharger) { if (autoRefresh && panelRefresh && !appHzHold) panelRefresh->applyForPower(onCharger); }
 
 void MainWindow::syncPages(const Snapshot &s) {
     if (!controlsPage) return;
@@ -1383,6 +1414,7 @@ static const int kThermalLevels[3] = {85, 90, 95};
 void MainWindow::syncSettingsPage() {
     Settings s; settingsPage->setState(autostartEnabled(), s.getValue("Settings/thermalAlert").toBool(), qBound(0, s.getValue("Settings/thermalLevel").toInt(), 2),
                                        s.getValue("Settings/gameMode").toBool(), !QStandardPaths::findExecutable("gamemoded").isEmpty());
+    if (appProfiles) settingsPage->setAppProfiles(appProfiles->enabled, appProfiles->rules.size());
 }
 
 void MainWindow::settingChanged(SettingsPage::Item what, int value) {
@@ -1392,6 +1424,8 @@ void MainWindow::settingChanged(SettingsPage::Item what, int value) {
         case SettingsPage::ThermalAlert: Settings::setValue("Settings/thermalAlert", value != 0); hotSince = 0; break;
         case SettingsPage::ThermalLevel: Settings::setValue("Settings/thermalLevel", value); break;
         case SettingsPage::GameMode: { bool on = value != 0; Settings::setValue("Settings/gameMode", on); if (on) gameTimer.start(); else { gameTimer.stop(); if (gameActive) { gameActive = false; if (gameSavedMode >= 0) setModeIndex(gameSavedMode); setCoolerBoostState(gameSavedBoost); } } break; }
+        case SettingsPage::AppProfiles: appProfiles->setEnabled(value != 0); break;
+        case SettingsPage::AppProfilesEdit: appProfiles->edit(this); break;
         case SettingsPage::ExportCsv: {
             const QString path = QDir::homePath() + "/mcontrolcenter-telemetry-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".csv"; QFile f(path);
             if (f.open(QIODevice::WriteOnly)) { f.write(dashboard->telemetryCsv().toUtf8()); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Telemetry saved to %1").arg(path), QSystemTrayIcon::Information, 5000); }
@@ -1548,6 +1582,10 @@ void MainWindow::exerciseAction(int what, int value) {
 void MainWindow::batteryExercise(const Snapshot &sn) {
     const qint64 now = secsNow(); const bool onBat = sn.status == "Discharging";
     if (sn.cap <= 0) return;
+    if (!histLoaded) historyLoad();                                                           // never decide "no row today" before the file has been read
+    if (sn.chargeFull > 0 && sn.chargeDesign > 0 && histLast != QDate::currentDate()) {          // one health sample per calendar day
+        const double h = 100.0 * sn.chargeFull / sn.chargeDesign; if (h > 20 && h <= 120) historyAppend(QString("D,%1,%2,%3").arg(QDate::currentDate().toString(Qt::ISODate)).arg(h, 0, 'f', 1).arg(int(sn.cycles)));
+    }
     // 1) usage learning: seconds plugged in vs on battery, exponentially forgotten (half-life about a week), saved at most every 5 minutes
     const double dt = exLastTick ? qBound(0.0, double(now - exLastTick), 30.0) : 0; exLastTick = now;
     // 0) automatic calibration: the root helper runs it and publishes its progress; this just mirrors it (and adopts a run started before the app was restarted)
@@ -1567,7 +1605,7 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
         if (exAuto && !exProc) {
             if (active && fresh) { exStage = state == "charging" || state == "starting" ? 1 : 2; exAutoMsg = kv.value("msg"); }
             else if (active && !fresh) { exAuto = false; exStage = 0; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("The calibration service stopped unexpectedly. Your charger state is restored at the next boot at the latest; you can also run: pkexec mcontrolcenter-battery restore"), QSystemTrayIcon::Warning, 12000); }
-            else if (state == "done") { exAuto = false; exStage = 0; exLast = now; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", kv.value("msg"), QSystemTrayIcon::Information, 14000); }
+            else if (state == "done") { exAuto = false; exStage = 0; exLast = now; exerciseSave(); historyAppend(QString("C,%1,%2,%3,%4").arg(QDate::currentDate().toString(Qt::ISODate), kv.value("endpct"), kv.value("full_before"), kv.value("full_after"))); if (trayIcon) trayIcon->showMessage("MControlCenter", kv.value("msg"), QSystemTrayIcon::Information, 14000); }
             else if (state == "aborted" || state == "error" || state == "cancelled") { exAuto = false; exStage = 0; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Calibration stopped: %1").arg(kv.value("msg")), QSystemTrayIcon::Warning, 14000); }
         }
     }
@@ -1578,7 +1616,7 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
     batteryPage->setRecommended(recommendedLimit());
     if (!exEnabled) { batteryPage->setExercise(exerciseView()); return; }
     auto done = [&] {
-        exLast = now; exStage = 0; setChargeLimit(exOrigLimit); exerciseSave();
+        exLast = now; exStage = 0; setChargeLimit(exOrigLimit); exerciseSave(); historyAppend(QString("C,%1,%2,0,0").arg(QDate::currentDate().toString(Qt::ISODate)).arg(sn.cap));
         if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Calibration complete: the battery reached %1 %. Plug the charger in; it recharges to your normal %2 % limit.").arg(sn.cap).arg(exOrigLimit), QSystemTrayIcon::Information, 12000); };
     if (exStage == 1) {
         if (sn.cap >= 99 || sn.status == "Full") { exStage = 2; exStageAt = now; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Fully charged. Calibration step 2 of 2: unplug the charger and use the laptop normally. I will tell you at %1 %.").arg(kCalTarget), QSystemTrayIcon::Information, 12000); }

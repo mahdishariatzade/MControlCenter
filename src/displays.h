@@ -15,6 +15,7 @@ public:
     void refresh();                         // re-read the modes
     void setHzIndex(int i);                 // pick one of `hz`
     void applyForPower(bool onCharger);     // highest rate on the charger, 60 Hz on battery
+    void setHzValue(int hz);                // 0 = highest, else the closest available rate (used by app profiles)
 signals:
     void changed();
 private:

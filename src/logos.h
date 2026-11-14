@@ -116,7 +116,7 @@ inline int iconForTitle(const QString &t) {
     const QString u = t.toUpper();
     struct K { const char *k; int ic; };
     static const K map[] = {{"CALIBRATION", IcCalib}, {"THERMAL", IcThermal}, {"COOLING", IcFan}, {"FAN", IcFan}, {"POWER PROFILE", IcBolt}, {"POWER", IcBattery}, {"BATTERY", IcBattery}, {"CHARGE", IcBattery},
-        {"TELEMETRY", IcPulse}, {"DATA", IcPulse}, {"GPU", IcGpu}, {"GRAPHICS", IcGpu}, {"MONITOR", IcMonitor}, {"DISPLAY", IcMonitor}, {"SCREEN", IcMonitor}, {"REFRESH", IcRefresh},
+        {"TELEMETRY", IcPulse}, {"HISTORY", IcPulse}, {"DATA", IcPulse}, {"GPU", IcGpu}, {"GRAPHICS", IcGpu}, {"MONITOR", IcMonitor}, {"DISPLAY", IcMonitor}, {"SCREEN", IcMonitor}, {"REFRESH", IcRefresh},
         {"KEYBOARD", IcKeyboard}, {"KEY GROUPS", IcKeyboard}, {"COLOUR", IcBulb}, {"PRESETS", IcBulb}, {"PROFILES", IcBulb}, {"EFFECT", IcBulb}, {"FOLLOW", IcLink}, {"PAINT", IcSliders},
         {"HARDWARE", IcSliders}, {"AUTOMATION", IcRefresh}, {"STARTUP", IcGear}, {"SYSTEM", IcCpu}, {"CPU", IcCpu}, {"MEMORY", IcRam}, {"CREDITS", IcInfo}, {"PROJECT", IcLink}};
     for (const K &k : map) if (u.contains(QLatin1String(k.k))) return k.ic;

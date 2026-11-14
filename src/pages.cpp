@@ -68,6 +68,30 @@ protected:
     }
 };
 
+// Battery health over time (one point a day) with a marker on every calibration: shows whether calibration / the charge limit actually helps.
+class HistoryPanel : public Panel {
+public:
+    HistoryPanel(QWidget *p) : Panel("", "HEALTH HISTORY", p) { setMinimumHeight(250); }
+    QVector<HistPoint> pts; QVector<HistEvent> ev; QString note;
+protected:
+    void paintBody(QPainter &p, const QRectF &b) override {
+        QRectF g(b.left() + 34, b.top() + 8, b.width() - 44, b.height() - 56);
+        p.setFont(fnt(MONO, 10)); p.setPen(kDim);
+        if (pts.size() < 2) { p.drawText(b, Qt::AlignCenter | Qt::TextWordWrap, "One point is recorded each day the app runs.\nThe graph appears after two days."); return; }
+        double lo = 100, hi = 0; for (const auto &q : pts) { lo = qMin(lo, q.health); hi = qMax(hi, q.health); }
+        lo = qMax(0.0, floor(lo - 1)); hi = qMin(100.0, ceil(hi + 0.5)); if (hi - lo < 3) { lo = qMax(0.0, hi - 3); }
+        const qint64 d0 = pts.first().day.toJulianDay(), d1 = qMax(pts.last().day.toJulianDay(), d0 + 1);
+        auto X = [&](qint64 d) { return g.left() + double(d - d0) / double(d1 - d0) * g.width(); }; auto Y = [&](double v) { return g.bottom() - (v - lo) / (hi - lo) * g.height(); };
+        p.setPen(QPen(alpha(kText, 0.08), 1, Qt::DotLine)); for (int i = 0; i <= 3; ++i) { double v = lo + (hi - lo) * i / 3, y = Y(v); p.drawLine(QPointF(g.left(), y), QPointF(g.right(), y)); p.setPen(kDim); p.drawText(QRectF(b.left(), y - 7, 30, 14), Qt::AlignRight | Qt::AlignVCenter, QString::number(v, 'f', 0) + "%"); p.setPen(QPen(alpha(kText, 0.08), 1, Qt::DotLine)); }
+        for (const auto &e : ev) { const double x = X(e.day.toJulianDay()); p.setPen(QPen(gAccent, 1, Qt::DashLine)); p.drawLine(QPointF(x, g.top()), QPointF(x, g.bottom())); p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(gAccent); p.drawText(QRectF(x + 3, g.top(), 80, 12), Qt::AlignLeft, "CALIBRATED"); }
+        QPainterPath path; for (int i = 0; i < pts.size(); ++i) { const QPointF pt(X(pts[i].day.toJulianDay()), Y(pts[i].health)); i ? path.lineTo(pt) : path.moveTo(pt); }
+        neon(p, path, kText, 1.8);
+        p.setBrush(gAccent); p.setPen(Qt::NoPen); p.drawEllipse(QPointF(X(d1), Y(pts.last().health)), 3.5, 3.5);
+        p.setFont(fnt(MONO, 10)); p.setPen(kDim); p.drawText(QRectF(g.left(), g.bottom() + 6, 120, 14), Qt::AlignLeft, pts.first().day.toString("d MMM yyyy")); p.drawText(QRectF(g.right() - 120, g.bottom() + 6, 120, 14), Qt::AlignRight, pts.last().day.toString("d MMM yyyy"));
+        p.setPen(kText); p.drawText(QRectF(g.left(), g.bottom() + 22, g.width(), 14), Qt::AlignLeft, note);
+    }
+};
+
 BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
     auto *outer = new QVBoxLayout(this); outer->setContentsMargins(0, 0, 0, 0);
     auto *scroll = new QScrollArea(this); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame); scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -77,8 +101,9 @@ BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
     charge = new ChargePanel(content); info = new RowsPanel("", "BATTERY", content); exercise = new RowsPanel("", "BATTERY CALIBRATION", content);
     charge->onCommit = [this](int v) { if (onLimit) onLimit(v); };
     charge->setFixedHeight(300);
-    grid->addWidget(charge, 0, 0); grid->addWidget(info, 0, 1); grid->addWidget(exercise, 1, 0, 1, 2); grid->setColumnStretch(0, 3); grid->setColumnStretch(1, 2); grid->setRowStretch(2, 1);
-    adopt(charge, 0.0); adopt(info, 0.1); adopt(exercise, 0.2);
+    history = new HistoryPanel(content);
+    grid->addWidget(charge, 0, 0); grid->addWidget(info, 0, 1); grid->addWidget(history, 1, 0, 1, 2); grid->addWidget(exercise, 2, 0, 1, 2); grid->setColumnStretch(0, 3); grid->setColumnStretch(1, 2); grid->setRowStretch(3, 1);
+    adopt(charge, 0.0); adopt(info, 0.1); adopt(history, 0.15); adopt(exercise, 0.2);
     for (auto [l, k] : std::vector<std::pair<QString, int>>{{"Status", 0}, {"Charge", 1}, {"Health", 2}, {"Cycles", 3}, {"Draw", 4}, {"Time", 5}}) { Row r; r.type = Row::Info; r.label = l; info->rows.push_back(r); (void) k; }
     Row g; g.type = Row::Gap; info->rows.push_back(g);
     Row t; t.type = Row::Text; t.label = "MSI recommends its \"Best for Battery\" setting (60 %) when the laptop is mostly used plugged in, \"Balanced\" (80 %) in between, and \"Best for Mobility\" (100 %) for frequent battery use. The tag above follows how you really use yours. Changes apply instantly."; info->rows.push_back(t); info->relayout();
@@ -91,6 +116,7 @@ BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
     { Row r; r.type = Row::Text; r.label = "Why: the battery's built-in gauge slowly loses track of its real capacity, especially when it sits at one level. MSI's own tool fixes that with a full charge, then a discharge, then a recharge, all with the charger connected. On supported MSI laptops this app does exactly that by itself: it charges to 100 %, tells the firmware to behave as if the charger were unplugged (the same register MSI's tool uses), discharges to 20 %, then restores the charger and your normal limit. If your laptop cannot do that, a guided manual version is used instead: it charges to 100 %, tells you when to unplug, then when to plug back in at 20 %. No memory effect: you never need to do this for any other reason. Storing the laptop for a long time? MSI suggests about 40 % charge and an EC reset."; exercise->rows.push_back(r); }
     exercise->relayout();
 }
+void BatteryPage::setHistory(const QVector<HistPoint> &pts, const QVector<HistEvent> &ev, const QString &note) { auto *h = static_cast<HistoryPanel *>(history); h->pts = pts; h->ev = ev; h->note = note; h->update(); }
 void BatteryPage::setRecommended(int percent) { if (charge->recommended != percent) { charge->recommended = percent; charge->update(); } }
 void BatteryPage::setExercise(const ExerciseView &v) {
     const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11").arg(v.enabled).arg(v.stage).arg(v.due).arg(v.never).arg(v.last, v.next, v.lowest).arg(v.usage, v.rule).arg(v.cap).arg(v.target) + (v.autoRun ? "A" : "M");
@@ -278,11 +304,14 @@ SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
     startup->relayout();
     { Row x; x.type = Row::Switch; x.label = "Turbo while gaming"; x.sub = "Turbo + Cooler Boost while a game runs (Feral GameMode)"; x.click = [this] { if (onChange) onChange(GameMode, automation->rows[0].on ? 0 : 1); }; automation->rows.push_back(x); }
     { Row x; x.type = Row::Text; x.label = "Needs the 'gamemode' package (many launchers use it automatically). Nothing changes until a game actually requests it."; automation->rows.push_back(x); }
+    { Row x; x.type = Row::Switch; x.label = "App profiles"; x.sub = "Switch mode and screen rate while chosen apps run"; x.click = [this] { if (onChange) onChange(AppProfiles, automation->rows[2].on ? 0 : 1); }; automation->rows.push_back(x); }
+    { Row x; x.type = Row::Button; x.label = "Edit app profiles"; x.click = [this] { if (onChange) onChange(AppProfilesEdit, 0); }; automation->rows.push_back(x); }
     automation->relayout();
     { Row x; x.type = Row::Button; x.label = "Export last 3 min telemetry (CSV)"; x.click = [this] { if (onChange) onChange(ExportCsv, 0); }; data->rows.push_back(x); }
     { Row x; x.type = Row::Text; x.label = "Temperatures, fan and power samples to a CSV file in your home folder: handy for bug reports or comparing modes."; data->rows.push_back(x); }
     data->relayout();
 }
+void SettingsPage::setAppProfiles(bool on, int n) { auto &R = automation->rows; const QString l = n ? QString("Edit app profiles (%1)").arg(n) : QString("Add an app profile"); if (R[2].on == on && R[3].label == l) return; R[2].on = on; R[3].label = l; automation->relayout(); automation->update(); kick(); }
 void SettingsPage::setState(bool a, bool t, int ti, bool g, bool avail) {
     bool ch = startup->rows[0].on != a || startup->rows[1].on != t || startup->rows[2].sel != ti || startup->rows[2].visible != t || automation->rows[0].on != g || automation->rows[0].enabled != avail;
     startup->rows[0].on = a; startup->rows[1].on = t; startup->rows[2].sel = ti; startup->rows[2].visible = t; automation->rows[0].on = g; automation->rows[0].enabled = true;

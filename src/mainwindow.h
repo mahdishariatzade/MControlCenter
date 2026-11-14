@@ -31,6 +31,7 @@
 #include "sensors.h"
 #include "pages.h"
 #include "displays.h"
+#include "appprofiles.h"
 #include "rgb.h"
 #include <QThread>
 
@@ -57,6 +58,7 @@ private:
     Caps lastCaps; QString lastModel, lastGpuState = "none", lastGpuMode = "on"; bool lastGpuSupported = false;
     QTimer gameTimer; bool gameActive = false; int gameSavedMode = -1; bool gameSavedBoost = false; qint64 hotSince = 0; qint64 lastAlertMs = 0;
     void settingChanged(SettingsPage::Item what, int value); void gameModeTick(); void thermalWatch(const Snapshot &s); void syncSettingsPage();
+    AppProfiles *appProfiles = nullptr; bool appActive = false, appHzHold = false; int appSavedMode = -1, appSavedBoost = -1;
     DisplaysPage *displaysPage = nullptr; PanelRefresh *panelRefresh = nullptr; int lastAcState = -1; bool autoRefresh = true;
     void panelRefreshSync(); void powerSourceChanged(bool onCharger);
     LightingPage *lightingPage = nullptr; RgbWorker *rgb = nullptr; QThread rgbThread; QTimer rgbDebounce;
@@ -64,7 +66,7 @@ private:
     RgbProfile rgbUser; bool rgbChosen = false, rgbFollowMode = false, rgbFlashThermal = false, rgbPulseLow = false, rgbOffOnLock = false, rgbLocked = false, rgbLowBat = false, rgbPresent = false; int rgbLastMode = -2;
     RgbProfile rgbEffective() const; void rgbPush(); void rgbSave(); void rgbLoad(); void rgbReset(); void onScreenLocked(bool locked);
     // battery exercise (guided real discharge cycle; this laptop cannot discharge on AC)
-    bool exEnabled = true, exWarnedNear = false, exWarnedLow = false; int exStage = 0, exOrigLimit = 60, exLow = 100; qint64 exLast = 0, exSince = 0, exStageAt = 0, exLowAt = 0, exLastNotify = 0, exLastTick = 0, exLastSave = 0; double exAcSec = 0, exBatSec = 0; bool exAuto = false; QString exAutoMsg; bool calOrphan = false; QString bannerKind; void restoreCharger(); QProcess *exProc = nullptr; qint64 exProcAt = 0;
+    bool exEnabled = true, exWarnedNear = false, exWarnedLow = false; int exStage = 0, exOrigLimit = 60, exLow = 100; qint64 exLast = 0, exSince = 0, exStageAt = 0, exLowAt = 0, exLastNotify = 0, exLastTick = 0, exLastSave = 0; double exAcSec = 0, exBatSec = 0; bool exAuto = false; QString exAutoMsg; QVector<HistPoint> histPts; QVector<HistEvent> histEv; QString histNote; QDate histLast; bool histLoaded = false; void historyLoad(); void historyAppend(const QString &row); bool calOrphan = false; QString bannerKind; void restoreCharger(); QProcess *exProc = nullptr; qint64 exProcAt = 0;
     double acShare() const; int calIntervalDays() const; int recommendedLimit() const;
     void exerciseLoad(); void exerciseSave(); void batteryExercise(const Snapshot &s); void exerciseAction(int what, int value); ExerciseView exerciseView() const;
     void buildPages();
