@@ -1238,8 +1238,16 @@ void MainWindow::buildPages() {
     controlsPage = new ControlsPage(this); batteryPage = new BatteryPage(this); fanPage = new FanPage(this); aboutPage = new AboutPage(this);
     auto swap = [this](QWidget *old, QWidget *neu, const QString &title) {      // the old widgets stay alive (hidden) as the backend the slots already know
         int i = ui->tabWidget->indexOf(old); if (i < 0) return; ui->tabWidget->removeTab(i); ui->tabWidget->insertTab(i, neu, title); };
-    settingsPage = new SettingsPage(this); lightingPage = new LightingPage(this);
+    settingsPage = new SettingsPage(this); lightingPage = new LightingPage(this); displaysPage = new DisplaysPage(this);
     swap(ui->overviewTab, controlsPage, tr("Controls")); swap(ui->batteryTab, batteryPage, tr("Battery")); swap(ui->fanControlTab, fanPage, tr("Fans")); swap(ui->aboutTab, aboutPage, tr("About"));
+    ui->tabWidget->insertTab(ui->tabWidget->indexOf(aboutPage), displaysPage, tr("Displays"));
+    {   // laptop panel refresh rate: manual choice + "follow the power source" (this replaces the old refresh-by-power user service)
+        panelRefresh = new PanelRefresh(this); { Settings st; autoRefresh = st.isValueExist("Display/autoRefresh") ? st.getValue("Display/autoRefresh").toBool() : true; }
+        connect(panelRefresh, &PanelRefresh::changed, this, [this] { panelRefreshSync(); });
+        displaysPage->onHz = [this](int i) { panelRefresh->setHzIndex(i); };
+        displaysPage->onAuto = [this](bool on) { autoRefresh = on; Settings::setValue("Display/autoRefresh", on); panelRefreshSync(); if (on && lastAcState >= 0) panelRefresh->applyForPower(lastAcState == 1); };
+        panelRefresh->refresh();
+    }
     ui->tabWidget->insertTab(ui->tabWidget->indexOf(aboutPage), lightingPage, tr("Lighting"));
     ui->tabWidget->insertTab(ui->tabWidget->indexOf(aboutPage), settingsPage, tr("Settings"));
     lightingPage->onProfile = [this](const RgbProfile &p) { rgbUser = p; rgbChosen = true; rgbSave(); lightingPage->setChosen(true); rgbPush(); };
@@ -1277,8 +1285,14 @@ void MainWindow::buildPages() {
     aboutPage->onLink = [this](int w) { aboutLink(w); };
 }
 
+void MainWindow::panelRefreshSync() { if (displaysPage && panelRefresh) displaysPage->setLaptop(panelRefresh->res, panelRefresh->hz, panelRefresh->current, autoRefresh, panelRefresh->available); }
+// Called when the power source changes (and once at start): the laptop panel runs at its highest rate on the charger and 60 Hz on battery.
+void MainWindow::powerSourceChanged(bool onCharger) { if (autoRefresh && panelRefresh) panelRefresh->applyForPower(onCharger); }
+
 void MainWindow::syncPages(const Snapshot &s) {
     if (!controlsPage) return;
+    { const int ac = (s.ac || exAuto) ? 1 : 0;          // a calibration simulates "unplugged" in firmware: that is still a charger, so never drop to 60 Hz because of it
+      if (s.cap > 0 && ac != lastAcState) { const bool first = lastAcState < 0; lastAcState = ac; if (!first || autoRefresh) QTimer::singleShot(first ? 2500 : 1000, this, [this, ac] { powerSourceChanged(ac == 1); }); } }
     const bool real = s.hasWebcam || s.hasFn || s.msiEc || s.gpuKnown || s.cap > 0;       // a default-constructed Snapshot only means "re-read the widgets"
     if (real) {
         auto sync = [](QCheckBox *c, bool v) { QSignalBlocker b(c); c->setChecked(v); };       // keep the hidden legacy widgets equal to the hardware so click() flips the right way

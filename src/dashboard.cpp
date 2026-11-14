@@ -34,6 +34,7 @@ protected:
         p.setFont(fnt(RAJ, 66, QFont::Bold)); p.setPen(off ? kDim : tempColor((v - 30) / 70)); p.drawText(QRectF(r.left() - 2, r.top() + 12, 120, 70), Qt::AlignLeft | Qt::AlignVCenter, num);
         if (!off) { p.setFont(fnt(RAJ, 20, QFont::Medium)); p.setPen(kDim); p.drawText(QRectF(r.left() + 84, r.top() + 26, 40, 24), Qt::AlignLeft | Qt::AlignTop, "°C"); }
         else { p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(kDim); p.drawText(QRectF(r.left() + 52, r.top() + 44, 80, 16), Qt::AlignLeft, "ASLEEP"); }
+        { const int bd = brandOf(sub); if (bd != BrNone) { const double bw = brandWidth(bd, 20); paintBrand(p, QRectF(r.right() - bw, r.top() - 6, bw, 20), bd, alpha(gAccent, 0.9)); } }   // vendor of this chip, from its name
         QRectF bar(r.left() + 130, r.top() + 36, r.width() - 130, 16);
         segBar(p, bar, off ? 0 : (v - 30) / 70, 40, off ? -1 : (peak - 30) / 70, [](double f) { return tempColor(f); }, 2.5);
         p.setFont(fnt(MONO, 9, QFont::Normal, 0)); p.setPen(kDim);
@@ -68,7 +69,12 @@ public:
     FanGlyph(QWidget *p) : QWidget(p) { setAttribute(Qt::WA_OpaquePaintEvent); setFixedSize(66, 66); hide(); }
     double rot = 0; QColor col = kDim;
 protected:
-    void paintEvent(QPaintEvent *) override { QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.fillRect(rect(), kPanel); drawFanGlyph(p, QPointF(33, 33), 27, rot, alpha(col, 0.92)); }
+    void paintGlass(QPainter &p) {            // the same gradient + accent wash as the panel behind, cut at this widget's position, so the opaque child is invisible
+        auto *pn = static_cast<Panel *>(parentWidget()); const double h = pn ? pn->height() : 272, hv = pn ? pn->hov : 0, y0 = y();
+        QLinearGradient g(0, 1 - y0, 0, h - 1 - y0); g.setColorAt(0, glassAt(0)); g.setColorAt(0.5, glassAt(0.5)); g.setColorAt(1, glassAt(1)); p.fillRect(rect(), g);
+        QLinearGradient w(0, 1 - y0, 0, 71 - y0); w.setColorAt(0, alpha(gAccent, 0.07 + 0.05 * hv)); w.setColorAt(1, alpha(gAccent, 0)); p.fillRect(rect(), w);
+    }
+    void paintEvent(QPaintEvent *) override { QPainter p(this); p.setRenderHint(QPainter::Antialiasing); paintGlass(p); drawFanGlyph(p, QPointF(33, 33), 27, rot, alpha(col, 0.92)); }
 };
 class FanPanel : public Panel {
 public:
@@ -228,8 +234,9 @@ protected:
     void paintEvent(QPaintEvent *) override {
         if (reveal <= 0.001) return; QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setOpacity(reveal);
         p.setPen(Qt::NoPen); p.setBrush(gAccent); p.drawRect(QRectF(0, 8, 5, 38));
-        p.setFont(fnt(RAJ, 34, QFont::Bold, 3)); p.setPen(kText); p.drawText(QRectF(16, 0, width() - 300, 40), Qt::AlignLeft | Qt::AlignVCenter, title);
-        p.setFont(fnt(MONO, 10, QFont::Normal, 0.5)); p.setPen(kDim); p.drawText(QRectF(17, 38, width() - 300, 14), Qt::AlignLeft | Qt::AlignVCenter, sub);
+        const double bw = brandWidth(BrMsi, 36), tx = 16 + bw + 16; paintBrand(p, QRectF(16, 6, bw, 36), BrMsi, gAccent);
+        p.setFont(fnt(RAJ, 34, QFont::Bold, 3)); p.setPen(kText); p.drawText(QRectF(tx, 0, width() - 300 - tx, 40), Qt::AlignLeft | Qt::AlignVCenter, title);
+        p.setFont(fnt(MONO, 10, QFont::Normal, 0.5)); p.setPen(kDim); p.drawText(QRectF(tx + 1, 38, width() - 300 - tx, 14), Qt::AlignLeft | Qt::AlignVCenter, sub);
         p.setFont(fnt(MONO, 11, QFont::Medium, 1)); double x = width();
         for (auto *s : {&right, &left}) {
             if (s->isEmpty()) continue; double w = QFontMetricsF(p.font()).horizontalAdvance(*s) + 26; x -= w;

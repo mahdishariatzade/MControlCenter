@@ -18,6 +18,7 @@ class AnimPage : public QWidget {
 public:
     explicit AnimPage(QWidget *p);
     void adopt(kit::Panel *pn, double delay);
+    void drop(kit::Panel *pn);                          // forget a panel that is about to be deleted
 protected:
     void showEvent(QShowEvent *) override; void hideEvent(QHideEvent *) override;
     virtual bool animateExtra(double, double) { return false; }

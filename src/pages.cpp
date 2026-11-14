@@ -1,4 +1,5 @@
 #include "pages.h"
+#include <algorithm>
 #include "sensors.h"
 #include "uikit.h"
 #include <QVBoxLayout>
@@ -11,6 +12,7 @@ using namespace kit;
 // ───────────────────────────── page animation driver ─────────────────────────────
 AnimPage::AnimPage(QWidget *p) : QWidget(p) { setObjectName("page"); timer.setInterval(16); timer.setTimerType(Qt::PreciseTimer); connect(&timer, &QTimer::timeout, this, [this] { tick(); }); }
 void AnimPage::adopt(Panel *pn, double delay) { pn->delay = delay; pn->wake = [this] { kick(); }; panels.push_back(pn); }
+void AnimPage::drop(Panel *pn) { panels.erase(std::remove(panels.begin(), panels.end(), pn), panels.end()); }
 void AnimPage::kick() { idle = 0; if (!timer.isActive() && isVisible()) { last = clock.elapsed() / 1000.0; timer.start(); } }
 void AnimPage::showEvent(QShowEvent *) { clock.start(); last = 0; for (auto *p : panels) p->reveal = 0; idle = 0; timer.start(); }       // entrance animation replays each time the page opens
 void AnimPage::hideEvent(QHideEvent *) { timer.stop(); }

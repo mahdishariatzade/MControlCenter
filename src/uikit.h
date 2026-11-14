@@ -55,12 +55,15 @@ inline void segBar(QPainter &p, const QRectF &r, double frac, int n, double peak
 inline QString fmtEta(double hours) { if (hours <= 0 || hours > 48) return {}; int m = int(hours * 60 + 0.5); return QString("%1h %2m").arg(m / 60).arg(m % 60, 2, 10, QChar('0')); }
 inline QColor tempColor(double v) { double c = 30 + v * 70; return c < 72 ? kText : c < 86 ? gAccent : kHot; }
 
+#include "logos.h"
+inline QColor glassAt(double t) { const QColor top(31, 33, 38), bot(18, 19, 22); t = qBound(0.0, t, 1.0); return t < 0.5 ? mix(top, kPanel, t * 2) : mix(kPanel, bot, (t - 0.5) * 2); }   // vertical gradient of every panel
+
 
 // ───────────────────────────── panel base: chamfered frame, index + title, entrance animation ─────────────────────────────
 class Panel : public QWidget {
 public:
-    Panel(const QString &idx, const QString &title, QWidget *p) : QWidget(p), idx(idx), title(title) { setMouseTracking(true); }
-    QString idx, title; double reveal = 0, hov = 0, delay = 0; bool hovering = false; std::function<void()> wake;   // wake: lets an idle page restart its animation timer
+    Panel(const QString &idx, const QString &title, QWidget *p) : QWidget(p), idx(idx), title(title) { icon = iconForTitle(title); setMouseTracking(true); }
+    QString idx, title; int icon = IcNone; double reveal = 0, hov = 0, delay = 0; bool hovering = false; std::function<void()> wake;   // wake: lets an idle page restart its animation timer
     bool tick(double clock, double dt) { reveal = easeOut((clock - delay) / 0.38); double old = hov; hov += ((hovering ? 1 : 0) - hov) * ease(dt, 0.07); return reveal < 1 || fabs(hov - old) > 0.002; }
 protected:
     virtual void paintBody(QPainter &, const QRectF &) = 0;
@@ -70,13 +73,18 @@ protected:
         if (reveal <= 0.001) return;
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.setOpacity(reveal); p.translate(0, (1 - reveal) * 14);
         QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1); QPainterPath path = chamfer(r, 13);
-        p.fillPath(path, kPanel);
-        p.setPen(QPen(mix(kLine, alpha(gAccent, 0.8), hov * 0.7), 1)); p.setBrush(Qt::NoBrush); p.drawPath(path);
+        QLinearGradient glass(r.topLeft(), r.bottomLeft()); glass.setColorAt(0, glassAt(0)); glass.setColorAt(0.5, glassAt(0.5)); glass.setColorAt(1, glassAt(1));
+        p.fillPath(path, glass);
+        QLinearGradient wash(r.topLeft(), r.topLeft() + QPointF(0, 70)); wash.setColorAt(0, alpha(gAccent, 0.07 + 0.05 * hov)); wash.setColorAt(1, alpha(gAccent, 0));
+        p.fillPath(path, wash);                                        // faint accent light spilling from the top edge, like a lit glass pane
+        p.setPen(QPen(alpha(kText, 0.07), 1)); p.drawLine(r.topLeft() + QPointF(16, 1.5), r.topRight() - QPointF(20, -1.5));   // specular edge
+        if (hov > 0.02) neon(p, path, alpha(gAccent, 0.85 * hov), 1.1);   // hover bloom
+        else { p.setPen(QPen(kLine, 1)); p.setBrush(Qt::NoBrush); p.drawPath(path); }
         p.setPen(QPen(gAccent, 2));                                    // registration ticks on the two square corners
         p.drawLine(r.topLeft() + QPointF(0, 11), r.topLeft()); p.drawLine(r.topLeft(), r.topLeft() + QPointF(11, 0));
         p.drawLine(r.bottomRight() - QPointF(0, 11), r.bottomRight()); p.drawLine(r.bottomRight(), r.bottomRight() - QPointF(11, 0));
-        p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(gAccent); p.drawText(QRectF(r.left() + 18, r.top() + 12, 28, 14), Qt::AlignLeft | Qt::AlignVCenter, idx);
-        p.setFont(fnt(RAJ, 14, QFont::DemiBold, 2.2)); p.setPen(kDim); p.drawText(QRectF(r.left() + (idx.isEmpty() ? 18 : 46), r.top() + 11, r.width() - 80, 16), Qt::AlignLeft | Qt::AlignVCenter, title);
+        if (icon != IcNone) paintIcon(p, QRectF(r.left() + 16, r.top() + 9, 20, 20), icon, gAccent);
+        p.setFont(fnt(RAJ, 14, QFont::DemiBold, 2.2)); p.setPen(kDim); p.drawText(QRectF(r.left() + (icon != IcNone ? 44 : 18), r.top() + 11, r.width() - 80, 16), Qt::AlignLeft | Qt::AlignVCenter, title);
         paintBody(p, QRectF(r.left() + 18, r.top() + 38, r.width() - 36, r.height() - 38 - 14));
     }
 };
@@ -137,7 +145,8 @@ protected:
 
 // ───────────────────────────── RowsPanel: a Panel whose body is a list of self-painted rows (switch / segmented choice / button / info / text) ─────────────────────────────
 struct Row {
-    enum Type { Switch, Segment, Button, Info, Text, Gap } type = Info;
+    enum Type { Switch, Segment, Button, Info, Text, Gap, Slider } type = Info;
+    int val = 0, vmax = 100;                                      // Slider: current / maximum; pick(v) fires when the drag ends
     QString label, sub, value; bool on = false, enabled = true, visible = true, accent = false;
     std::vector<QString> opts; int sel = 0;
     std::function<void()> click; std::function<void(int)> pick; double anim = 0;
@@ -155,7 +164,8 @@ public:
     void relayout() { int h = 38 + 16; for (size_t i = 0; i < rows.size(); ++i) h += int(rowHeight(rows[i])); setMinimumHeight(h); updateGeometry(); update(); }
 protected:
     struct Hit { QRectF r; int row, opt; };
-    std::vector<Hit> hits; int hoverRow = -1, hoverOpt = -1;
+    std::vector<Hit> hits; int hoverRow = -1, hoverOpt = -1, dragRow = -1; QRectF dragTrack;
+    void setSliderFromX(double x) { Row &r = rows[dragRow]; double f = qBound(0.0, (x - dragTrack.left()) / qMax(1.0, dragTrack.width()), 1.0); int v = int(f * r.vmax + 0.5); if (v != r.val) { r.val = v; update(); } if (wake) wake(); }
     double bodyW() const { return qMax(200, width() - 38 - 36); }
     double rowHeight(const Row &r) const {
         if (!r.visible) return 0;
@@ -165,12 +175,14 @@ protected:
             case Row::Button: return 46;
             case Row::Info: return 26;
             case Row::Gap: return 12;
+            case Row::Slider: return (r.sub.isEmpty() ? 0 : 16) + 52;
             case Row::Text: { QFontMetricsF fm(fnt(MONO, 11)); return fm.boundingRect(QRectF(0, 0, bodyW(), 4000), Qt::TextWordWrap, r.label).height() + 12; }
         }
         return 0;
     }
     void resizeEvent(QResizeEvent *) override { relayout(); }
     void mouseMoveEvent(QMouseEvent *e) override {
+        if (dragRow >= 0) { setSliderFromX(e->position().x()); return; }
         int hr = -1, ho = -1; for (auto &h : hits) if (h.r.contains(e->position())) { hr = h.row; ho = h.opt; break; }
         if (hr != hoverRow || ho != hoverOpt) { hoverRow = hr; hoverOpt = ho; setCursor(hr >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor); update(); if (wake) wake(); }
     }
@@ -178,11 +190,13 @@ protected:
     void mousePressEvent(QMouseEvent *e) override {
         for (auto &h : hits) if (h.r.contains(e->position())) {
             Row &r = rows[h.row]; if (!r.enabled) return;
+            if (r.type == Row::Slider) { dragRow = h.row; dragTrack = h.r; setSliderFromX(e->position().x()); return; }
             if (r.type == Row::Segment) { if (h.opt != r.sel && r.pick) r.pick(h.opt); }
             else if (r.click) r.click();
             if (wake) wake(); return;
         }
     }
+    void mouseReleaseEvent(QMouseEvent *) override { if (dragRow >= 0) { Row &r = rows[dragRow]; dragRow = -1; if (r.pick) r.pick(r.val); update(); } }
     void paintBody(QPainter &p, const QRectF &b) override {
         hits.clear(); double y = b.top() - 4;
         for (size_t i = 0; i < rows.size(); ++i) {
@@ -219,6 +233,15 @@ protected:
                     p.setFont(fnt(MONO, 11, QFont::Medium)); p.setPen(r.accent ? gAccent : kText); p.drawText(QRectF(rr.left() + 110, rr.top(), rr.width() - 110, rr.height()), Qt::AlignRight | Qt::AlignVCenter, r.value.isEmpty() ? "—" : r.value); break;
                 case Row::Text:
                     p.setFont(fnt(MONO, 11)); p.setPen(r.accent ? gAccent : kDim); p.drawText(QRectF(rr.left(), rr.top() + 4, rr.width(), rr.height()), Qt::TextWordWrap, r.label); break;
+                case Row::Slider: {
+                    double yy = rr.top();
+                    p.setFont(fnt(RAJ, 18, QFont::DemiBold, 1)); p.setPen(tc); p.drawText(QRectF(rr.left(), yy + 2, rr.width() - 90, 22), Qt::AlignLeft | Qt::AlignVCenter, r.label.toUpper());
+                    p.setFont(fnt(MONO, 12, QFont::Medium)); p.setPen(r.enabled ? gAccent : kDim); p.drawText(QRectF(rr.right() - 90, yy + 2, 90, 22), Qt::AlignRight | Qt::AlignVCenter, r.value.isEmpty() ? QString::number(r.val) : r.value);
+                    yy += 24; if (!r.sub.isEmpty()) { p.setFont(fnt(MONO, 10)); p.setPen(kDim); p.drawText(QRectF(rr.left(), yy, rr.width(), 14), Qt::AlignLeft | Qt::AlignVCenter, r.sub); yy += 16; }
+                    QRectF bar(rr.left(), yy + 8, rr.width(), 12); double f = r.vmax ? double(r.val) / r.vmax : 0; int n = qBound(20, int(bar.width() / 11), 60);
+                    segBar(p, bar, f, n, -1, [&](double) { return r.enabled ? gAccent : kDim; }, 3);
+                    if (r.enabled) { double kx = bar.left() + f * bar.width(); p.setPen(QPen(kText, 2)); p.drawLine(QPointF(kx, bar.top() - 4), QPointF(kx, bar.bottom() + 4)); }
+                    hits.push_back({bar.adjusted(0, -10, 0, 10), (int) i, 0}); break; }
                 case Row::Gap: break;
             }
             if (r.type == Row::Switch && i + 1 < rows.size()) { p.setPen(QPen(alpha(kText, 0.07), 1, Qt::DotLine)); p.drawLine(QPointF(rr.left(), rr.bottom() - 1), QPointF(rr.right(), rr.bottom() - 1)); }
