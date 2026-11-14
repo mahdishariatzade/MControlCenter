@@ -229,7 +229,7 @@ MainWindow::MainWindow(QWidget *parent)
     buildPages();
     setTabsEnabled(false);
 
-    connect(dashboard, &DashboardPage::fixRequested, this, &MainWindow::runDoctorFix);
+    connect(dashboard, &DashboardPage::fixRequested, this, [this] { if (bannerKind == "restore") restoreCharger(); else runDoctorFix(); });
     checkDriver();
 
     if (!operate.isEcSysModuleLoaded() && !operate.loadEcSysModule())
@@ -1221,6 +1221,17 @@ void MainWindow::checkDriver() {
     else dashboard->setProblem(tr("The msi-ec driver is not loaded. Reinstall MControlCenter with install.sh to set up the driver and automatic repair after kernel updates."), QString());
 }
 
+void MainWindow::restoreCharger() {
+    dashboard->setProblem(tr("Restoring the charger state and your charge limit..."), QString());
+    auto *pr = new QProcess(this);
+    connect(pr, &QProcess::finished, this, [this, pr](int code, QProcess::ExitStatus) {
+        pr->deleteLater();
+        if (code == 0) { bannerKind.clear(); calOrphan = false; dashboard->setProblem(QString(), QString()); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Charger state and charge limit restored."), QSystemTrayIcon::Information, 6000); }
+        else { dashboard->setProblem(tr("Restore did not finish (authentication cancelled or failed). Try again, or run: pkexec /usr/libexec/mcontrolcenter/mcontrolcenter-battery restore"), tr("Try again")); }
+    });
+    pr->start("pkexec", {"/usr/libexec/mcontrolcenter/mcontrolcenter-battery", "restore"});
+}
+
 void MainWindow::runDoctorFix() {
     dashboard->setProblem(tr("Repairing the driver: installing kernel headers and rebuilding msi-ec. This can take a minute..."), QString());
     auto *pr = new QProcess(this);
@@ -1545,6 +1556,13 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
         if (f.open(QIODevice::ReadOnly)) for (const QByteArray &ln : f.readAll().split('\n')) { const int i = ln.indexOf('='); if (i > 0) kv[QString::fromUtf8(ln.left(i))] = QString::fromUtf8(ln.mid(i + 1)); }
         const QString state = kv.value("state"); const qint64 ts = kv.value("ts").toLongLong(); const bool fresh = ts && now - ts < 40;
         const bool active = state == "charging" || state == "discharging" || state == "restoring" || state == "starting";
+        // a run that died (crash, power loss, killed service) leaves its saved originals behind: say so loudly and offer the one-click restore
+        const bool orphan = QFile::exists("/var/lib/mcontrolcenter/calibration.orig") && !(active && fresh) && !exProc;
+        if (orphan != calOrphan) {
+            calOrphan = orphan;
+            if (orphan) { bannerKind = "restore"; dashboard->setProblem(tr("A battery calibration was interrupted. The charger may still be simulated as unplugged and your charge limit may still be at 100 %. Restore them now."), tr("Restore charger")); }
+            else if (bannerKind == "restore") { bannerKind.clear(); dashboard->setProblem(QString(), QString()); }
+        }
         if (!exAuto && !exProc && !exStage && active && fresh) { exAuto = true; }
         if (exAuto && !exProc) {
             if (active && fresh) { exStage = state == "charging" || state == "starting" ? 1 : 2; exAutoMsg = kv.value("msg"); }
