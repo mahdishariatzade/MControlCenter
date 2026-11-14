@@ -164,6 +164,7 @@ public:
     GraphPanel(QWidget *p) : Panel("04", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(150); }
     void push(double cpu, double gpu, double watts) { for (auto *d : {&c, &g, &w}) if (d->size() >= N) d->pop_front(); c.push_back(cpu); g.push_back(gpu); w.push_back(watts); }
     bool hasGpu = false;
+    QString csv() const { QString o = "seconds_ago,cpu_c,gpu_c,battery_watts\n"; int n = int(c.size()); for (int i = 0; i < n; ++i) o += QString("%1,%2,%3,%4\n").arg(n - 1 - i).arg(c[i] < 0 ? QString() : QString::number(c[i], 'f', 0)).arg(g[i] < 0 ? QString() : QString::number(g[i], 'f', 0)).arg(w[i], 0, 'f', 1); return o; }
 protected:
     double hoverX = -1;
     void mouseMoveEvent(QMouseEvent *e) override { hoverX = e->position().x(); }
@@ -341,6 +342,8 @@ void DashboardPage::animate() {
 }
 
 DashboardPage::PowerText DashboardPage::powerText() const { return {power->state, power->draw, power->eta, power->health, power->cycles}; }
+
+QString DashboardPage::telemetryCsv() const { return graph->csv(); }
 
 void DashboardPage::setRpm(int cpuRpm, int gpuRpm) { fans->rpm[0] = cpuRpm; fans->rpm[1] = gpuRpm; }
 

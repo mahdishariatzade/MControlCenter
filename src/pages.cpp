@@ -223,7 +223,33 @@ AboutPage::AboutPage(QWidget *p) : AnimPage(p) {
     gap(); text("MSI and Micro-Star International are trademarks of their owners. This project is community-made and not affiliated with or endorsed by MSI.");
     credits->relayout();
     for (const char *l : {"Version", "Qt", "EC firmware", "msi-ec driver", "Kernel", "Desktop"}) { Row r; r.type = Row::Info; r.label = l; system->rows.push_back(r); } system->relayout();
-    const char *lb[4] = {"Source code (this fork)", "Original project", "Report a problem / my laptop", "Copy hardware report"};
+    const char *lb[4] = {"Source code (this fork)", "Original project", "Report a problem / add my laptop", "Copy hardware report"};
     for (int i = 0; i < 4; ++i) { Row r; r.type = Row::Button; r.label = lb[i]; r.accent = i == 3; r.click = [this, i] { if (onLink) onLink(i); }; links->rows.push_back(r); } links->relayout();
 }
 void AboutPage::setInfo(const QString &v, const QString &qt, const QString &ec, const QString &drv, const QString &k, const QString &de) { const QString x[6] = {v, qt, ec, drv, k, de}; for (int i = 0; i < 6; ++i) system->rows[i].value = x[i]; system->update(); }
+
+// ───────────────────────────── settings ─────────────────────────────
+SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
+    auto *root = new QHBoxLayout(this); root->setContentsMargins(18, 16, 18, 16); root->setSpacing(10);
+    auto *l = new QVBoxLayout; l->setSpacing(10); auto *r = new QVBoxLayout; r->setSpacing(10);
+    startup = new RowsPanel("01", "STARTUP & ALERTS", this); automation = new RowsPanel("02", "AUTOMATION", this); data = new RowsPanel("03", "DATA", this);
+    l->addWidget(startup); l->addStretch(1); r->addWidget(automation); r->addWidget(data); r->addStretch(1);
+    root->addLayout(l, 1); root->addLayout(r, 1); adopt(startup, 0.0); adopt(automation, 0.1); adopt(data, 0.2);
+    { Row x; x.type = Row::Switch; x.label = "Start with my session"; x.sub = "Runs quietly in the system tray after login"; x.click = [this] { if (onChange) onChange(Autostart, startup->rows[0].on ? 0 : 1); }; startup->rows.push_back(x); }
+    { Row x; x.type = Row::Switch; x.label = "Thermal alerts"; x.sub = "Notify me when the CPU stays hot for 10 seconds"; x.click = [this] { if (onChange) onChange(ThermalAlert, startup->rows[1].on ? 0 : 1); }; startup->rows.push_back(x); }
+    { Row x; x.type = Row::Segment; x.label = "Alert above"; x.opts = {"85 °C", "90 °C", "95 °C"}; x.visible = false; x.pick = [this](int i) { if (onChange) onChange(ThermalLevel, i); }; startup->rows.push_back(x); }
+    { Row x; x.type = Row::Text; x.label = "Launching MControlCenter again from the menu simply raises this window."; startup->rows.push_back(x); }
+    startup->relayout();
+    { Row x; x.type = Row::Switch; x.label = "Turbo while gaming"; x.sub = "Turbo + Cooler Boost while a game runs (Feral GameMode)"; x.click = [this] { if (onChange) onChange(GameMode, automation->rows[0].on ? 0 : 1); }; automation->rows.push_back(x); }
+    { Row x; x.type = Row::Text; x.label = "Needs the 'gamemode' package (many launchers use it automatically). Nothing changes until a game actually requests it."; automation->rows.push_back(x); }
+    automation->relayout();
+    { Row x; x.type = Row::Button; x.label = "Export last 3 min telemetry (CSV)"; x.click = [this] { if (onChange) onChange(ExportCsv, 0); }; data->rows.push_back(x); }
+    { Row x; x.type = Row::Text; x.label = "Temperatures, fan and power samples to a CSV file in your home folder: handy for bug reports or comparing modes."; data->rows.push_back(x); }
+    data->relayout();
+}
+void SettingsPage::setState(bool a, bool t, int ti, bool g, bool avail) {
+    bool ch = startup->rows[0].on != a || startup->rows[1].on != t || startup->rows[2].sel != ti || startup->rows[2].visible != t || automation->rows[0].on != g || automation->rows[0].enabled != avail;
+    startup->rows[0].on = a; startup->rows[1].on = t; startup->rows[2].sel = ti; startup->rows[2].visible = t; automation->rows[0].on = g; automation->rows[0].enabled = true;
+    automation->rows[0].sub = avail ? "Turbo + Cooler Boost while a game runs (Feral GameMode)" : "Needs the 'gamemode' package";
+    if (ch) { startup->relayout(); automation->relayout(); kick(); }
+}

@@ -174,8 +174,8 @@ protected:
             QColor tc = r.enabled ? kText : alpha(kDim, 0.6);
             switch (r.type) {
                 case Row::Switch: {
-                    p.setFont(fnt(RAJ, 18, QFont::DemiBold, 1)); p.setPen(tc); p.drawText(QRectF(rr.left(), rr.top() + 6, rr.width() - 70, 22), Qt::AlignLeft | Qt::AlignVCenter, r.label.toUpper());
-                    if (!r.sub.isEmpty()) { p.setFont(fnt(MONO, 10)); p.setPen(kDim); p.drawText(QRectF(rr.left(), rr.top() + 29, rr.width() - 70, 16), Qt::AlignLeft | Qt::AlignVCenter, r.sub); }
+                    p.setFont(fnt(RAJ, 18, QFont::DemiBold, 1)); p.setPen(tc); p.drawText(QRectF(rr.left(), rr.top() + 6, rr.width() - 110, 22), Qt::AlignLeft | Qt::AlignVCenter, r.label.toUpper());
+                    if (!r.sub.isEmpty()) { p.setFont(fnt(MONO, 10)); p.setPen(kDim); p.drawText(QRectF(rr.left(), rr.top() + 29, rr.width() - 110, 16), Qt::AlignLeft | Qt::AlignVCenter, r.sub); }
                     QRectF tr(rr.right() - 52, rr.top() + (h - 24) / 2, 52, 24); QColor ac = r.enabled ? gAccent : kDim;
                     p.setPen(QPen(r.on ? ac : mix(kLine, ac, hov ? 0.8 : 0), 1)); p.setBrush(r.on ? alpha(ac, 0.16 + 0.14 * r.anim) : QBrush(Qt::NoBrush)); p.drawPath(chamfer(tr, 6));
                     QRectF th(tr.left() + 4 + r.anim * (tr.width() - 8 - 16), tr.top() + 4, 16, 16); p.setPen(Qt::NoPen); p.setBrush(r.on ? ac : kDim); p.drawRect(th);

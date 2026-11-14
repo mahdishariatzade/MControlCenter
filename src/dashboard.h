@@ -50,6 +50,7 @@ public:
     void setRpm(int cpuRpm, int gpuRpm);    // fan RPM comes from the ec_sys helper (cached), cheap to set from the GUI thread
     struct PowerText { QString state, draw, eta, health, cycles; };
     PowerText powerText() const;
+    QString telemetryCsv() const;           // last 3 minutes, one row per second
     void setControlsEnabled(bool enabled);
     void setProblem(const QString &text, const QString &button);   // empty text hides the banner
 

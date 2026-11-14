@@ -26,6 +26,12 @@
 #include <QJsonDocument>
 #include <QFile>
 #include <QProcess>
+#include <QStandardPaths>
+#include <QDateTime>
+#include <QDir>
+#include <QDBusReply>
+#include <QDBusVariant>
+#include <QDBusConnectionInterface>
 #include <QEventLoop>
 #include <QDesktopServices>
 #include <QUrl>
@@ -189,7 +195,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&sensorThread, &QThread::finished, sensors, &QObject::deleteLater);
     connect(sensors, &SensorWorker::snapshot, this, [this](const Snapshot &sn) {
         int r0 = dashData.cpuFanRpm, r1 = dashData.gpuFanRpm; if (sn.msiEc) { dashData = sn.d; dashData.cpuFanRpm = r0; dashData.gpuFanRpm = r1; }
-        dashboard->applySnapshot(sn); syncPages(sn);
+        dashboard->applySnapshot(sn); syncPages(sn); thermalWatch(sn);
     });
     sensorThread.start();
     bridge = new ControlBridge(this);
@@ -1207,8 +1213,14 @@ void MainWindow::buildPages() {
     controlsPage = new ControlsPage(this); batteryPage = new BatteryPage(this); fanPage = new FanPage(this); aboutPage = new AboutPage(this);
     auto swap = [this](QWidget *old, QWidget *neu, const QString &title) {      // the old widgets stay alive (hidden) as the backend the slots already know
         int i = ui->tabWidget->indexOf(old); if (i < 0) return; ui->tabWidget->removeTab(i); ui->tabWidget->insertTab(i, neu, title); };
+    settingsPage = new SettingsPage(this);
     swap(ui->overviewTab, controlsPage, tr("Controls")); swap(ui->batteryTab, batteryPage, tr("Battery")); swap(ui->fanControlTab, fanPage, tr("Fans")); swap(ui->aboutTab, aboutPage, tr("About"));
+    ui->tabWidget->insertTab(ui->tabWidget->indexOf(aboutPage), settingsPage, tr("Settings"));
     ui->tabWidget->removeTab(ui->tabWidget->indexOf(ui->debugTab));
+    settingsPage->onChange = [this](SettingsPage::Item w, int v) { settingChanged(w, v); };
+    connect(&gameTimer, &QTimer::timeout, this, &MainWindow::gameModeTick); gameTimer.setInterval(5000);
+    if (Settings().getValue("Settings/gameMode").toBool()) gameTimer.start();
+    syncSettingsPage();
     ui->tabWidget->setCurrentIndex(0);
 
     controlsPage->onSwitch = [this](ControlsPage::Sw s) {
@@ -1274,11 +1286,78 @@ void MainWindow::setGpuBootMode(bool on) {
     pr->start("pkexec", {helper, "set", on ? "on" : "off"});
 }
 
-void MainWindow::aboutLink(int w) {
-    static const char *urls[3] = {"https://github.com/p34t1k/MControlCenter", "https://github.com/dmitry-s93/MControlCenter", "https://github.com/p34t1k/MControlCenter/issues/new/choose"};
-    if (w < 3) { QDesktopServices::openUrl(QUrl(urls[w])); return; }
+static QString hardwareReport() {
     QString doctor = "/usr/libexec/mcontrolcenter/mcontrolcenter-doctor"; if (!QFile::exists(doctor)) doctor = QCoreApplication::applicationDirPath() + "/../scripts/mcontrolcenter-doctor";
-    QProcess pr; pr.start(doctor, {"report"}); pr.waitForFinished(8000);
-    QGuiApplication::clipboard()->setText(QString::fromUtf8(pr.readAllStandardOutput()));
+    QProcess pr; pr.start(doctor, {"report"}); pr.waitForFinished(8000); return QString::fromUtf8(pr.readAllStandardOutput());
+}
+
+void MainWindow::aboutLink(int w) {
+    static const char *urls[2] = {"https://github.com/p34t1k/MControlCenter", "https://github.com/dmitry-s93/MControlCenter"};
+    if (w < 2) { QDesktopServices::openUrl(QUrl(urls[w])); return; }
+    const QString report = hardwareReport(); QGuiApplication::clipboard()->setText(report);
+    if (w == 2) {                                                         // open a Hardware-report issue with the report already filled in (kept in the clipboard as a fallback)
+        QString url = "https://github.com/p34t1k/MControlCenter/issues/new?template=hardware-report.yml"; const QByteArray enc = QUrl::toPercentEncoding(report);
+        if (enc.size() < 6500) url += "&report=" + QString::fromLatin1(enc);
+        QDesktopServices::openUrl(QUrl(url)); return;
+    }
     if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Hardware report copied to the clipboard. Paste it into a GitHub issue."), QSystemTrayIcon::Information, 4000);
+}
+
+// ───────────────────────────── settings, alerts, automation ─────────────────────────────
+static QString userAutostartFile() { return QDir::homePath() + "/.config/autostart/mcontrolcenter.desktop"; }
+static bool autostartEnabled() {
+    QFile f(userAutostartFile()); if (f.open(QIODevice::ReadOnly)) return !QString::fromUtf8(f.readAll()).contains("Hidden=true");     // a user file overrides the system one
+    return QFile::exists("/etc/xdg/autostart/mcontrolcenter.desktop");
+}
+static void setAutostart(bool on) {
+    const QString f = userAutostartFile(); QDir().mkpath(QFileInfo(f).absolutePath());
+    if (on && QFile::exists("/etc/xdg/autostart/mcontrolcenter.desktop")) { QFile::remove(f); return; }              // the system default already starts it
+    QFile out(f); if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+    out.write(on ? "[Desktop Entry]\nType=Application\nName=MControlCenter\nExec=mcontrolcenter\nIcon=mcontrolcenter\n" : "[Desktop Entry]\nType=Application\nName=MControlCenter\nHidden=true\n");
+}
+static const int kThermalLevels[3] = {85, 90, 95};
+
+void MainWindow::syncSettingsPage() {
+    Settings s; settingsPage->setState(autostartEnabled(), s.getValue("Settings/thermalAlert").toBool(), qBound(0, s.getValue("Settings/thermalLevel").toInt(), 2),
+                                       s.getValue("Settings/gameMode").toBool(), !QStandardPaths::findExecutable("gamemoded").isEmpty());
+}
+
+void MainWindow::settingChanged(SettingsPage::Item what, int value) {
+    Settings s;
+    switch (what) {
+        case SettingsPage::Autostart: setAutostart(value != 0); break;
+        case SettingsPage::ThermalAlert: Settings::setValue("Settings/thermalAlert", value != 0); hotSince = 0; break;
+        case SettingsPage::ThermalLevel: Settings::setValue("Settings/thermalLevel", value); break;
+        case SettingsPage::GameMode: { bool on = value != 0; Settings::setValue("Settings/gameMode", on); if (on) gameTimer.start(); else { gameTimer.stop(); if (gameActive) { gameActive = false; if (gameSavedMode >= 0) setModeIndex(gameSavedMode); setCoolerBoostState(gameSavedBoost); } } break; }
+        case SettingsPage::ExportCsv: {
+            const QString path = QDir::homePath() + "/mcontrolcenter-telemetry-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".csv"; QFile f(path);
+            if (f.open(QIODevice::WriteOnly)) { f.write(dashboard->telemetryCsv().toUtf8()); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Telemetry saved to %1").arg(path), QSystemTrayIcon::Information, 5000); }
+            break; }
+    }
+    syncSettingsPage();
+}
+
+// Alert once (then at most every 5 minutes) when the CPU has stayed above the chosen temperature for 10 s.
+void MainWindow::thermalWatch(const Snapshot &sn) {
+    Settings s; if (!s.getValue("Settings/thermalAlert").toBool() || !sn.msiEc) { hotSince = 0; return; }
+    const int level = kThermalLevels[qBound(0, s.getValue("Settings/thermalLevel").toInt(), 2)]; const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (sn.d.cpuTemp < level) { hotSince = 0; return; }
+    if (!hotSince) hotSince = now;
+    if (now - hotSince >= 10000 && now - lastAlertMs > 300000 && trayIcon) { lastAlertMs = now; trayIcon->showMessage("MControlCenter", tr("CPU has been at %1 °C for 10 seconds. Cooler Boost or a quieter workload would help.").arg(sn.d.cpuTemp), QSystemTrayIcon::Warning, 8000); }
+}
+
+// Feral GameMode integration: Turbo + Cooler Boost while any game holds a GameMode request, then restore exactly what the user had.
+void MainWindow::gameModeTick() {
+    QDBusConnectionInterface *bus = QDBusConnection::sessionBus().interface(); int clients = 0;
+    if (bus && bus->isServiceRegistered("com.feralinteractive.GameMode")) {
+        QDBusInterface i("com.feralinteractive.GameMode", "/com/feralinteractive/GameMode", "org.freedesktop.DBus.Properties", QDBusConnection::sessionBus()); i.setTimeout(500);
+        QDBusReply<QDBusVariant> r = i.call("Get", "com.feralinteractive.GameMode", "ClientCount"); if (r.isValid()) clients = r.value().variant().toInt();
+    }
+    if (clients > 0 && !gameActive) {
+        gameActive = true; gameSavedMode = dashData.mode; gameSavedBoost = dashData.coolerBoost; setModeIndex(0); setCoolerBoostState(true);
+        if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Game detected: Turbo + Cooler Boost on."), QSystemTrayIcon::Information, 3000);
+    } else if (clients == 0 && gameActive) {
+        gameActive = false; if (gameSavedMode >= 0) setModeIndex(gameSavedMode); setCoolerBoostState(gameSavedBoost);
+        if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Game finished: back to your previous mode."), QSystemTrayIcon::Information, 3000);
+    }
 }

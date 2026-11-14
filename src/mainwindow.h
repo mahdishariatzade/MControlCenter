@@ -50,7 +50,9 @@ private:
     ControlBridge *bridge = nullptr;
     DashData dashData;
     SensorWorker *sensors = nullptr; QThread sensorThread;
-    ControlsPage *controlsPage = nullptr; BatteryPage *batteryPage = nullptr; FanPage *fanPage = nullptr; AboutPage *aboutPage = nullptr;
+    ControlsPage *controlsPage = nullptr; BatteryPage *batteryPage = nullptr; FanPage *fanPage = nullptr; AboutPage *aboutPage = nullptr; SettingsPage *settingsPage = nullptr;
+    QTimer gameTimer; bool gameActive = false; int gameSavedMode = -1; bool gameSavedBoost = false; qint64 hotSince = 0; qint64 lastAlertMs = 0;
+    void settingChanged(SettingsPage::Item what, int value); void gameModeTick(); void thermalWatch(const Snapshot &s); void syncSettingsPage();
     void buildPages();
     void syncPages(const Snapshot &s);
     void syncFanEditor(); void writeFanToUi(int fan, const QVector<int> &speeds, const QVector<int> &temps);

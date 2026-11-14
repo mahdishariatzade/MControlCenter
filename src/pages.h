@@ -66,6 +66,16 @@ private:
     kit::RowsPanel *head; CurvePanel *curve; int fan = 0; bool two = false, advanced = false;
 };
 
+class SettingsPage : public AnimPage {
+public:
+    explicit SettingsPage(QWidget *p);
+    enum Item { Autostart, ThermalAlert, ThermalLevel, GameMode, ExportCsv };
+    void setState(bool autostart, bool thermal, int thermalIdx, bool gameMode, bool gameAvailable);
+    std::function<void(Item, int)> onChange;
+private:
+    kit::RowsPanel *startup, *automation, *data;
+};
+
 class AboutPage : public AnimPage {
 public:
     explicit AboutPage(QWidget *p);

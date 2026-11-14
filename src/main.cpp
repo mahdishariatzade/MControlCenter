@@ -21,13 +21,15 @@
 #include <QFontDatabase>
 #include <QTranslator>
 #include <QDBusConnectionInterface>
+#include <QDBusInterface>
 
 int main(int argc, char *argv[]) {
     const QString serviceName = "io.github.dmitry_s93.MControlCenter";
 
     const bool shotMode = getenv("MCC_SHOT") != nullptr;
     if (!shotMode && QDBusConnection::sessionBus().interface()->isServiceRegistered(serviceName)) {
-        fprintf(stderr, "Another instance of the application is already running\n");
+        // already running (usually hidden in the tray): ask it to show its window instead of silently doing nothing
+        QDBusInterface("io.github.dmitry_s93.MControlCenter", "/Control", "io.github.dmitry_s93.MControlCenter.Control", QDBusConnection::sessionBus()).call("ShowWindow");
         return 0;
     }
 
