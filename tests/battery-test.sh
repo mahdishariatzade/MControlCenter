@@ -6,6 +6,9 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"; SCRIPT="${MCC_SCRIPT:-$HERE/scripts/mc
 fail=0; pass=0
 ok() { if eval "$2"; then pass=$((pass + 1)); echo "  ok   $1"; else fail=$((fail + 1)); echo "  FAIL $1   [$2]"; fi; }
 
+# real sysfs reads are atomic; plain "echo > file" is not (a reader can see it empty), which made the script see a phantom unplug on slow CI machines
+put() { echo "$2" > "$1.tmp" && mv -f "$1.tmp" "$1"; }
+
 setup() {   # fresh simulated machine: 60 % battery, charger in, limit 50-60, register 0xBF = 0x38 (bits 3-5 set: they must survive)
     T="$(mktemp -d)"; export MCC_PS="$T/ps" MCC_RUN="$T/run" MCC_LIB="$T/lib" MCC_FAKE_REGS="$T/regs" MCC_POLL=0.2 MCC_STALL=4 MCC_REASSERT=1
     mkdir -p "$T/ps/BAT1" "$T/ps/ADP1" "$T/run" "$T/lib" "$T/regs"
@@ -16,11 +19,11 @@ setup() {   # fresh simulated machine: 60 % battery, charger in, limit 50-60, re
       while :; do
           if [ -f "$T/freeze" ]; then sleep 0.1; continue; fi
           bf=$(cat "$T/regs/191" 2>/dev/null || echo 56); end=$(cat "$T/ps/BAT1/charge_control_end_threshold" 2>/dev/null || echo 60)
-          if [ $((bf & 1)) = 1 ]; then echo 0 > "$T/ps/ADP1/online"; st=Discharging; [ $cap -gt 0 ] && cap=$((cap - 1))
-          else echo 1 > "$T/ps/ADP1/online"
+          if [ $((bf & 1)) = 1 ]; then put "$T/ps/ADP1/online" 0; st=Discharging; [ $cap -gt 0 ] && cap=$((cap - 1))
+          else put "$T/ps/ADP1/online" 1
               if [ $cap -lt "$end" ]; then st=Charging; cap=$((cap + 1)); else st="Not charging"; [ $cap -ge 100 ] && st=Full; fi
           fi
-          echo $cap > "$T/ps/BAT1/capacity"; echo "$st" > "$T/ps/BAT1/status"; echo $((cap * 30000)) > "$T/ps/BAT1/charge_now"
+          put "$T/ps/BAT1/capacity" $cap; put "$T/ps/BAT1/status" "$st"; put "$T/ps/BAT1/charge_now" $((cap * 30000))
           sleep 0.1
       done ) & SIM=$!
 }
