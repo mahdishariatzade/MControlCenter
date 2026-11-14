@@ -44,7 +44,7 @@ private:
     QString gReason, gDriver, gPower; qint64 gA = 0, gS = 0;
 };
 
-struct ExerciseView { bool enabled = false; int interval = 1, depth = 1; bool active = false, due = false; QString last = "never", next = "—", lowest = "—"; int cap = 0, target = 40; };
+struct ExerciseView { bool enabled = false; int interval = 1, depth = 1; bool active = false, due = false, never = true; QString last = "never", next = "—", lowest = "—"; int cap = 0, target = 40; };
 class BatteryPage : public AnimPage {
 public:
     explicit BatteryPage(QWidget *p);

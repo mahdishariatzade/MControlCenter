@@ -1447,23 +1447,26 @@ static qint64 secsNow() { return QDateTime::currentSecsSinceEpoch(); }
 void MainWindow::exerciseLoad() {
     Settings s; exEnabled = s.getValue("Battery/exercise").toBool(); exActive = s.getValue("Battery/active").toBool();
     exInterval = s.isValueExist("Battery/interval") ? qBound(0, s.getValue("Battery/interval").toInt(), 2) : 1; exDepth = s.isValueExist("Battery/depth") ? qBound(0, s.getValue("Battery/depth").toInt(), 2) : 1;
-    exLast = s.getValue("Battery/last").toLongLong(); exLow = s.isValueExist("Battery/low") ? s.getValue("Battery/low").toInt() : 100; exLowAt = s.getValue("Battery/lowAt").toLongLong();
+    exLast = s.getValue("Battery/last").toLongLong(); exSince = s.getValue("Battery/since").toLongLong();
+    if (exLast && !exSince) { exSince = exLast; exLast = 0; }                       // v1 wrongly stored the day tracking started as "last exercise": move it where it belongs
+    exLow = s.isValueExist("Battery/low") ? s.getValue("Battery/low").toInt() : 100; exLowAt = s.getValue("Battery/lowAt").toLongLong();
 }
 void MainWindow::exerciseSave() {
     Settings::setValue("Battery/exercise", exEnabled); Settings::setValue("Battery/active", exActive); Settings::setValue("Battery/interval", exInterval); Settings::setValue("Battery/depth", exDepth);
-    Settings::setValue("Battery/last", qlonglong(exLast)); Settings::setValue("Battery/low", exLow); Settings::setValue("Battery/lowAt", qlonglong(exLowAt));
+    Settings::setValue("Battery/last", qlonglong(exLast)); Settings::setValue("Battery/since", qlonglong(exSince)); Settings::setValue("Battery/low", exLow); Settings::setValue("Battery/lowAt", qlonglong(exLowAt));
 }
 ExerciseView MainWindow::exerciseView() const {
     ExerciseView v; v.enabled = exEnabled; v.interval = exInterval; v.depth = exDepth; v.active = exActive; v.cap = rgbBattery; v.target = kExDepth[exDepth];
-    v.last = exLast ? QDateTime::fromSecsSinceEpoch(exLast).toString("d MMM yyyy") : QString("never");
-    const qint64 due = (exLast ? exLast : secsNow()) + kExDays[exInterval] * 86400LL; v.next = QDateTime::fromSecsSinceEpoch(due).toString("d MMM yyyy"); v.due = exEnabled && exLast && secsNow() >= due;
+    v.never = exLast == 0; v.last = exLast ? QDateTime::fromSecsSinceEpoch(exLast).toString("d MMM yyyy") : QString("never");
+    const qint64 base = exLast ? exLast : (exSince ? exSince : secsNow());                       // the clock runs from the last REAL exercise, or from when tracking was switched on
+    const qint64 due = base + kExDays[exInterval] * 86400LL; v.next = QDateTime::fromSecsSinceEpoch(due).toString("d MMM yyyy"); v.due = exEnabled && secsNow() >= due;
     v.lowest = (exLowAt && secsNow() - exLowAt < 30 * 86400LL) ? QString("%1 %").arg(exLow) : QString("no discharge yet");
     return v;
 }
 void MainWindow::exerciseAction(int what, int value) {
     const qint64 now = secsNow();
     switch (what) {
-        case 0: exEnabled = value != 0; if (exEnabled && !exLast) exLast = now; if (!exEnabled) exActive = false; break;       // the clock starts when the feature is switched on
+        case 0: exEnabled = value != 0; if (exEnabled && !exSince) exSince = now; if (!exEnabled) exActive = false; break;       // tracking starts when the feature is switched on; this is NOT an exercise
         case 1: exInterval = qBound(0, value, 2); break;
         case 2: exDepth = qBound(0, value, 2); break;
         case 3: exActive = true; exWarnedNear = exWarnedLow = false;
@@ -1484,7 +1487,8 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
         } else if (exActive && onBat && sn.cap <= depth + 8 && !exWarnedNear) { exWarnedNear = true; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Almost there: %1 %. Keep going to %2 %.").arg(sn.cap).arg(depth), QSystemTrayIcon::Information, 6000); }
         else if (onBat && sn.cap <= 15 && !exWarnedLow) { exWarnedLow = true; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery at %1 %: plug the charger in now.").arg(sn.cap), QSystemTrayIcon::Warning, 10000); }
         else if (!onBat) exWarnedLow = false;
-        if (!exActive && exLast && now >= exLast + kExDays[exInterval] * 86400LL && sn.ac && now - exLastNotify > 86400) {                    // overdue: one gentle reminder a day, only while plugged in
+        const qint64 base = exLast ? exLast : exSince;
+        if (!exActive && base && now >= base + kExDays[exInterval] * 86400LL && sn.ac && now - exLastNotify > 86400) {                    // overdue: one gentle reminder a day, only while plugged in
             exLastNotify = now; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery exercise is due. Whenever it suits you, unplug and use the laptop down to %1 %. Open Battery to start a guided run.").arg(depth), QSystemTrayIcon::Information, 10000);
         }
     }

@@ -91,12 +91,13 @@ BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
     exercise->relayout();
 }
 void BatteryPage::setExercise(const ExerciseView &v) {
-    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10").arg(v.enabled).arg(v.interval).arg(v.depth).arg(v.active).arg(v.due).arg(v.last, v.next, v.lowest).arg(v.cap).arg(v.target);
+    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11").arg(v.enabled).arg(v.interval).arg(v.depth).arg(v.active).arg(v.due).arg(v.last, v.next, v.lowest).arg(v.cap).arg(v.target).arg(v.never);
     if (sig == exSig) return; exSig = sig;                       // only touch the layout when something visible changed
     auto &R = exercise->rows; R[0].on = v.enabled; for (int i : {1, 2, 3, 4, 5, 6, 7}) R[i].visible = v.enabled; R[1].sel = v.interval; R[2].sel = v.depth;
     R[3].value = v.last; R[4].value = v.next; R[5].value = v.lowest;
     R[6].label = v.active ? QString("EXERCISE IN PROGRESS: unplug the charger and keep working. Now %1 %, target %2 %. I will tell you when to plug back in.").arg(v.cap).arg(v.target)
-                          : v.due ? QString("DUE NOW: whenever it suits you, unplug the charger and use the laptop down to %1 %.").arg(v.target) : QString("All good: no exercise needed yet.");
+                          : v.due ? QString("DUE NOW: whenever it suits you, unplug the charger and use the laptop down to %1 %.").arg(v.target)
+                          : v.never ? QString("No exercise done yet. Tracking has started: the first reminder comes on %1.").arg(v.next) : QString("All good: the last exercise was %1, the next is due %2.").arg(v.last, v.next);
     R[7].label = v.active ? "Cancel exercise" : "Start guided exercise"; R[7].accent = !v.active;
     exercise->relayout(); exercise->update(); kick();
 }
