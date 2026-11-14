@@ -8,6 +8,7 @@
 #include <QVector>
 #include <QPointF>
 #include <QJsonObject>
+#include <QSet>
 #include <functional>
 #include "uikit.h"
 #include "rgb.h"
@@ -35,7 +36,11 @@ public:
     std::function<void(int)> onCalibZone;             // wizard: blink this zone on the keyboard
     std::function<void()> onCalibEnd;
     void startCalibration(); bool calibrating() const { return calib; }
-    void selectAll() { sel = zones == 24 ? 0xFFFFFFu : 0xFu; update(); }
+    QSet<int> selKeys;                                 // the keys the user picked; `sel` is the set of hardware zones they belong to
+    void setSelectedKeys(const QSet<int> &k) { selKeys = k; recomputeSel(); update(); }
+    QSet<int> selectedKeys() const { return selKeys; }
+    void recomputeSel() { sel = 0; for (int k : selKeys) { int z = map.keyZone.value(k, -1); if (z >= 0) sel |= 1u << z; } }
+    void selectAll() { selKeys.clear(); for (int i = 0; i < map.keyZone.size(); ++i) if (map.keyZone[i] >= 0) selKeys.insert(i); recomputeSel(); update(); }
 protected:
     void paintBody(QPainter &p, const QRectF &b) override;
     void mousePressEvent(QMouseEvent *e) override; void mouseMoveEvent(QMouseEvent *e) override; void mouseReleaseEvent(QMouseEvent *) override;

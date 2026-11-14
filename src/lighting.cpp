@@ -7,6 +7,8 @@
 #include <QGridLayout>
 #include <QScrollArea>
 #include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 
 using namespace kit;
 
@@ -120,6 +122,52 @@ protected:
     }
 };
 
+
+// ───────────────────────────── key groups: quick picks + groups the user saves ─────────────────────────────
+class GroupsPanel : public Panel {
+public:
+    struct Group { QString name; QSet<int> keys; };
+    GroupsPanel(QWidget *p) : Panel("08", "KEY GROUPS", p) { setMinimumHeight(330); load(); }
+    std::function<QSet<int>()> currentKeys; std::function<void(const QSet<int> &)> onPick; QVector<Group> user; QString note;
+protected:
+    QRectF quick[6], tiles[8], dels[8], bSave; int hot = -1;
+    static QSet<int> byLabels(const QStringList &labels, double maxX = 99) { QSet<int> k; const auto &L = keyboardLayout(); for (int i = 0; i < L.size(); ++i) if (labels.contains(L[i].label) && L[i].r.x() < maxX) k.insert(i); return k; }
+    static QSet<int> builtin(int i) {
+        const auto &L = keyboardLayout(); QSet<int> k;
+        switch (i) {
+            case 0: return byLabels({"W", "A", "S", "D"}, 15);
+            case 1: return byLabels({"▲", "◀", "▼", "▶"});
+            case 2: for (int j = 0; j < L.size(); ++j) if (L[j].r.y() < 0.5) k.insert(j); return k;
+            case 3: for (int j = 0; j < L.size(); ++j) if (L[j].r.x() >= 15.3) k.insert(j); return k;
+            case 4: for (int j = 0; j < L.size(); ++j) if (L[j].label.size() == 1 && L[j].label[0].isLetter()) k.insert(j); return k;
+            default: for (int j = 0; j < L.size(); ++j) if (L[j].r.x() < 15 && L[j].r.y() > 0.5) k.insert(j); return k;       // whole main block
+        }
+    }
+    void load() { Settings s; const QString j = s.getValue("Rgb/groups").toString(); if (j.isEmpty()) return; for (const QJsonValue &v : QJsonDocument::fromJson(j.toUtf8()).array()) { Group g; g.name = v.toObject()["name"].toString(); for (const QJsonValue &k : v.toObject()["keys"].toArray()) g.keys.insert(k.toInt()); if (!g.keys.isEmpty()) user << g; } }
+    void save() { QJsonArray a; for (const Group &g : user) { QJsonArray ks; for (int k : g.keys) ks.append(k); QJsonObject o; o["name"] = g.name; o["keys"] = ks; a.append(o); } Settings::setValue("Rgb/groups", QString::fromUtf8(QJsonDocument(a).toJson(QJsonDocument::Compact))); }
+    void mousePressEvent(QMouseEvent *e) override {
+        const QPointF pt = e->position();
+        for (int i = 0; i < 6; ++i) if (quick[i].contains(pt)) { if (onPick) onPick(builtin(i)); return; }
+        if (bSave.contains(pt) && currentKeys && user.size() < 8) { QSet<int> k = currentKeys(); if (k.isEmpty()) { note = "Select some keys first."; update(); return; } user << Group{QString("GROUP %1").arg(user.size() + 1), k}; save(); note = "Saved. Click a group to select it again."; update(); return; }
+        for (int i = 0; i < user.size(); ++i) { if (dels[i].contains(pt)) { user.remove(i); save(); update(); return; } if (tiles[i].contains(pt) && onPick) { onPick(user[i].keys); return; } }
+    }
+    void mouseMoveEvent(QMouseEvent *e) override { int h = -1; const QPointF pt = e->position(); for (int i = 0; i < 6; ++i) if (quick[i].contains(pt)) h = i; for (int i = 0; i < user.size(); ++i) if (tiles[i].contains(pt)) h = 10 + i; if (h != hot) { hot = h; update(); } setCursor(h >= 0 || bSave.contains(pt) ? Qt::PointingHandCursor : Qt::ArrowCursor); }
+    void paintBody(QPainter &p, const QRectF &b) override {
+        static const char *qn[6] = {"WASD", "ARROWS", "F-ROW", "NUMPAD", "LETTERS", "MAIN BLOCK"};
+        p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(kDim); p.drawText(QRectF(b.left(), b.top() - 2, 200, 12), Qt::AlignLeft, "QUICK PICKS");
+        double gap = 6, tw = (b.width() - 2 * gap) / 3;
+        for (int i = 0; i < 6; ++i) { QRectF t(b.left() + (i % 3) * (tw + gap), b.top() + 14 + (i / 3) * 36, tw, 30); quick[i] = t; bool h = hot == i; p.setPen(QPen(h ? gAccent : kLine, 1)); p.setBrush(h ? alpha(gAccent, 0.10) : QBrush(Qt::NoBrush)); p.drawPath(chamfer(t, 7)); p.setFont(fnt(RAJ, 14, QFont::Bold, 1.2)); p.setPen(kText); p.drawText(t, Qt::AlignCenter, qn[i]); }
+        double y = b.top() + 14 + 78; p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(kDim); p.drawText(QRectF(b.left(), y, 200, 12), Qt::AlignLeft, "MY GROUPS"); y += 16;
+        double gw = (b.width() - gap) / 2;
+        for (int i = 0; i < user.size() && i < 8; ++i) { QRectF t(b.left() + (i % 2) * (gw + gap), y + (i / 2) * 38, gw, 32); tiles[i] = t; bool h = hot == 10 + i; p.setPen(QPen(h ? gAccent : kLine, 1)); p.setBrush(h ? alpha(gAccent, 0.10) : QBrush(Qt::NoBrush)); p.drawPath(chamfer(t, 7));
+            p.setFont(fnt(RAJ, 14, QFont::Bold, 1)); p.setPen(kText); p.drawText(QRectF(t.left() + 10, t.top(), gw - 40, 32), Qt::AlignLeft | Qt::AlignVCenter, QString("%1 · %2 KEYS").arg(user[i].name).arg(user[i].keys.size()));
+            dels[i] = QRectF(t.right() - 28, t.top() + 4, 24, 24); p.setFont(fnt(RAJ, 16, QFont::Bold)); p.setPen(kDim); p.drawText(dels[i], Qt::AlignCenter, "×"); }
+        if (user.isEmpty()) { p.setFont(fnt(MONO, 10)); p.setPen(kDim); p.drawText(QRectF(b.left(), y, b.width(), 30), Qt::AlignLeft | Qt::TextWordWrap, "None yet. Pick any keys on the keyboard, then save them as a group."); }
+        bSave = QRectF(b.left(), b.bottom() - 52, b.width(), 34); p.setPen(QPen(gAccent, 1)); p.setBrush(alpha(gAccent, 0.14)); p.drawPath(chamfer(bSave, 8)); p.setFont(fnt(RAJ, 15, QFont::Bold, 1.5)); p.setPen(gAccent); p.drawText(bSave, Qt::AlignCenter, "SAVE CURRENT SELECTION AS A GROUP");
+        p.setFont(fnt(MONO, 10)); p.setPen(note.isEmpty() ? kDim : gAccent); p.drawText(QRectF(b.left(), b.bottom() - 14, b.width(), 14), Qt::AlignLeft | Qt::AlignVCenter, note.isEmpty() ? "Keys that share a hardware zone always share a colour." : note);
+    }
+};
+
 // ───────────────────────────── page ─────────────────────────────
 KeyMap LightingPage::keyMap() const { return kb->map; }
 void LightingPage::debugCalibrate() { kb->present = true; kb->startCalibration(); }
@@ -132,13 +180,15 @@ LightingPage::LightingPage(QWidget *p) : AnimPage(p) {
     auto *grid = new QGridLayout(content); grid->setContentsMargins(18, 16, 18, 16); grid->setSpacing(10);
 
     kb = new KeyboardMap(content); colour = new ColorPanel(content); presets = new PresetPanel(content); slotPanel = new SlotsPanel(content);
-    effect = new RowsPanel("02", "EFFECT", content); tools = new RowsPanel("04", "PAINT TOOLS", content); follow = new RowsPanel("07", "FOLLOW THE LAPTOP", content);
+    groupsPanel = new GroupsPanel(content); effect = new RowsPanel("02", "EFFECT", content); tools = new RowsPanel("04", "PAINT TOOLS", content); follow = new RowsPanel("07", "FOLLOW THE LAPTOP", content);
     kb->setMinimumHeight(310); grid->addWidget(kb, 0, 0, 1, 3);
     grid->addWidget(effect, 1, 0); grid->addWidget(colour, 1, 1); grid->addWidget(tools, 1, 2);
-    grid->addWidget(presets, 2, 0); grid->addWidget(slotPanel, 2, 1); grid->addWidget(follow, 2, 2);
-    for (int c = 0; c < 3; ++c) grid->setColumnStretch(c, 1); grid->setRowStretch(3, 1);
-    adopt(kb, 0.0); adopt(effect, 0.08); adopt(colour, 0.12); adopt(tools, 0.16); adopt(presets, 0.2); adopt(slotPanel, 0.24); adopt(follow, 0.28);
-    kb->prof = &prof;
+    grid->addWidget(presets, 2, 0); grid->addWidget(slotPanel, 2, 1); grid->addWidget(follow, 2, 2); grid->addWidget(groupsPanel, 3, 0);
+    for (int c = 0; c < 3; ++c) grid->setColumnStretch(c, 1); grid->setRowStretch(4, 1);
+    adopt(kb, 0.0); adopt(effect, 0.08); adopt(colour, 0.12); adopt(tools, 0.16); adopt(presets, 0.2); adopt(slotPanel, 0.24); adopt(follow, 0.28); adopt(groupsPanel, 0.32);
+    kb->prof = &prof; kb->selectAll();
+    groupsPanel->currentKeys = [this] { return kb->selectedKeys(); };
+    groupsPanel->onPick = [this](const QSet<int> &k) { kb->setSelectedKeys(k); syncRows(); };
 
     // calibration plumbing
     kb->onCalibZone = [this](int z) { if (onCalibrating) onCalibrating(true); if (onPreviewZone) onPreviewZone(z); };

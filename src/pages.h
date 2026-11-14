@@ -67,7 +67,7 @@ private:
     kit::RowsPanel *head; CurvePanel *curve; int fan = 0; bool two = false, advanced = false;
 };
 
-class KeyboardMap; class ColorPanel; class PresetPanel; class SlotsPanel; struct KeyMap;
+class KeyboardMap; class ColorPanel; class PresetPanel; class SlotsPanel; class GroupsPanel; struct KeyMap;
 class LightingPage : public AnimPage {
 public:
     explicit LightingPage(QWidget *p);
@@ -85,7 +85,7 @@ protected:
     void changed(); void syncRows(); void applyColor(const QColor &c, int target); void paintTool(int tool);
 private:
     RgbProfile prof; bool present = false; int zones = 24;
-    KeyboardMap *kb; ColorPanel *colour; PresetPanel *presets; SlotsPanel *slotPanel; kit::RowsPanel *effect, *tools, *follow;
+    KeyboardMap *kb; ColorPanel *colour; PresetPanel *presets; SlotsPanel *slotPanel; GroupsPanel *groupsPanel; kit::RowsPanel *effect, *tools, *follow;
 };
 
 class SettingsPage : public AnimPage {

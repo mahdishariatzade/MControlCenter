@@ -68,7 +68,7 @@ void KeyboardMap::gotoStep(int s) { step = qBound(0, s, zones - 1); if (onCalibZ
 void KeyboardMap::finishCalibration() {
     KeyMap m = map; m.keyZone = QVector<int>(m.keyZone.size(), -1);
     for (int z = 0; z < zones; ++z) for (int k : marked[z]) m.keyZone[k] = z;
-    m.calibrated = true; m.save(); map = m; calib = false; if (onMapChanged) onMapChanged(); if (onCalibEnd) onCalibEnd(); update();
+    m.calibrated = true; m.save(); map = m; calib = false; recomputeSel(); if (onMapChanged) onMapChanged(); if (onCalibEnd) onCalibEnd(); update();
 }
 
 void KeyboardMap::mousePressEvent(QMouseEvent *e) {
@@ -85,8 +85,9 @@ void KeyboardMap::mousePressEvent(QMouseEvent *e) {
     if (bAll.contains(pt)) { selectAll(); if (onSelect) onSelect(); return; }
     if (bZones.contains(pt)) { showZones = !showZones; update(); return; }
     if (bCal.contains(pt)) { startCalibration(); return; }
-    int k = keyAt(pt); if (k < 0 || !present) return; int z = map.keyZone.value(k, -1); if (z < 0) return;
-    if (e->modifiers() & Qt::ControlModifier) sel ^= (1u << z); else sel = 1u << z; drag = k; if (onSelect) onSelect(); update();
+    int k = keyAt(pt); if (k < 0 || !present || map.keyZone.value(k, -1) < 0) return;
+    if (e->modifiers() & Qt::ControlModifier) { if (selKeys.contains(k)) selKeys.remove(k); else selKeys.insert(k); } else selKeys = QSet<int>{k};
+    drag = k; recomputeSel(); if (onSelect) onSelect(); update();
 }
 void KeyboardMap::mouseMoveEvent(QMouseEvent *e) {
     int k = keyAt(e->position()); if (k != hotKey) { hotKey = k; update(); }
@@ -95,7 +96,7 @@ void KeyboardMap::mouseMoveEvent(QMouseEvent *e) {
     setCursor(btn || k >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
     if (drag >= 0 && k >= 0 && k != drag) {
         if (calib) { if (!marked[step].contains(k)) { for (auto &s : marked) s.remove(k); marked[step].insert(k); update(); } }
-        else { int z = map.keyZone.value(k, -1); if (z >= 0 && !(sel & (1u << z))) { sel |= 1u << z; if (onSelect) onSelect(); update(); } }
+        else if (map.keyZone.value(k, -1) >= 0 && !selKeys.contains(k)) { selKeys.insert(k); recomputeSel(); if (onSelect) onSelect(); update(); }
     }
 }
 void KeyboardMap::mouseReleaseEvent(QMouseEvent *) { drag = -1; }
@@ -116,12 +117,12 @@ void KeyboardMap::paintBody(QPainter &p, const QRectF &b) {
     scale = qMin(area.width() / ext.width(), area.height() / ext.height()); origin = QPointF(area.left() + (area.width() - scale * ext.width()) / 2, area.top() + (area.height() - scale * ext.height()) / 2);
     const auto &L = keyboardLayout(); QSet<int> markedAny; if (calib) for (int z = 0; z < zones; ++z) if (z != step) for (int k : marked[z]) markedAny.insert(k);
     for (int i = 0; i < L.size(); ++i) {
-        const QRectF r = keyRect(i); int z = map.keyZone.value(i, -1); bool selected = !calib && z >= 0 && (sel & (1u << z)); bool hot = i == hotKey;
+        const QRectF r = keyRect(i); int z = map.keyZone.value(i, -1); bool selected = !calib && selKeys.contains(i); bool affected = !calib && !selected && z >= 0 && (sel & (1u << z)); bool hot = i == hotKey;
         QColor fill;
         if (calib) fill = marked[step].contains(i) ? QColor(255, 40, 30) : markedAny.contains(i) ? QColor(40, 70, 45) : QColor(28, 30, 33);
         else if (z < 0) fill = QColor(28, 30, 33);
         else { fill = prof ? zoneColor(*prof, z) : kDim; if (prof && prof->brightness < 100) { int f = 30 + prof->brightness * 70 / 100; fill = QColor(fill.red() * f / 100, fill.green() * f / 100, fill.blue() * f / 100); } }
-        p.setPen(QPen(selected ? kText : hot ? gAccent : alpha(kText, z < 0 && !calib ? 0.08 : 0.25), selected ? 2 : 1)); p.setBrush(fill); p.drawRoundedRect(r, 3, 3);
+        p.setPen(QPen(selected ? kText : affected ? gAccent : hot ? gAccent : alpha(kText, z < 0 && !calib ? 0.08 : 0.25), selected ? 2.5 : affected ? 1.6 : 1, affected ? Qt::DashLine : Qt::SolidLine)); p.setBrush(fill); p.drawRoundedRect(r, 3, 3);
         double lum = fill.redF() * 0.3 + fill.greenF() * 0.59 + fill.blueF() * 0.11; p.setPen(lum > 0.55 ? QColor(20, 20, 20) : alpha(kText, 0.85));
         QFont lf = fnt(RAJ, qMax(8, int(scale * 0.34)), QFont::DemiBold); p.setFont(lf); p.drawText(r, Qt::AlignCenter, L[i].label);
         if (showZones && z >= 0 && !calib) { p.setFont(fnt(MONO, qMax(7, int(scale * 0.22)), QFont::Medium)); p.setPen(lum > 0.55 ? QColor(20, 20, 20, 190) : alpha(kText, 0.6)); p.drawText(r.adjusted(3, 1, 0, 0), Qt::AlignTop | Qt::AlignLeft, QString::number(z)); }
@@ -132,8 +133,8 @@ void KeyboardMap::paintBody(QPainter &p, const QRectF &b) {
     if (!calib) {
         p.setPen(present ? kDim : gAccent);
         p.drawText(QRectF(b.left(), b.bottom() - 18, b.width(), 18), Qt::AlignLeft | Qt::AlignVCenter,
-                   !present ? "No keyboard controller connected." : map.calibrated ? "Click or drag keys to pick zones, then choose a colour. Ctrl+click adds."
-                                                                                  : "This map is a guess. Run CALIBRATE KEYBOARD once so the map matches your keyboard (about 2 minutes).");
+                   !present ? "No keyboard controller connected." : map.calibrated ? "Click keys (drag or Ctrl+click for more), then choose a colour. Dashed keys share a hardware zone with your pick and change too."
+                                                                                  : "Click keys to pick them. Dashed keys share a hardware zone with your pick and change too. The key-to-zone map is a guess until you CALIBRATE.");
     } else {
         // progress strip: one chip per zone (done / current / empty); click a chip to jump to that zone
         const double cw = 17, cg = 3; double cx = b.right() - zones * (cw + cg) + cg; int done = 0;
