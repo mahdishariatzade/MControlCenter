@@ -74,7 +74,7 @@ class FanPanel : public Panel {
 public:
     FanPanel(QWidget *p) : Panel("02", "COOLING", p) { setMinimumHeight(272); for (auto &g : gl) g = new FanGlyph(this); }
     FanGlyph *gl[2];
-    int pct[2] = {-1, -1}, rpm[2] = {0, 0}; double shown[2] = {0, 0}, speed[2] = {0, 0}, rot[2] = {0, 0}; bool two = false, boost = false, boostOk = true;
+    int pct[2] = {-1, -1}, rpm[2] = {0, 0}; double shown[2] = {0, 0}, speed[2] = {0, 0}, rot[2] = {0, 0}, rpmRef[2] = {0, 0}, lastDrawn[2] = {0, 0}; bool two = false, boost = false, boostOk = true;
     std::function<void(bool)> onBoost;
     // Rotation is integrated from real elapsed time (deg/s), so it is perfectly smooth whatever the timer does.
     // Returns true when the bar (not just the glyph) changed and the whole panel needs repainting.
@@ -82,10 +82,18 @@ public:
         bool bars = false;
         for (int i = 0; i < 2; ++i) {
             double before = shown[i]; shown[i] += (qMax(pct[i], 0) - shown[i]) * ease(dt, 0.35); if (fabs(shown[i] - qMax(pct[i], 0)) < 0.05) shown[i] = qMax(pct[i], 0); bars |= fabs(shown[i] - before) > 0.0;
-            double want = shown[i] < 1 ? 0 : 60 + shown[i] * 6.0;          // deg/s: ~60 at idle .. ~660 at full tilt (below the wagon-wheel limit for 7 blades)
+            // Visual speed follows the REAL fan speed: a 3000 rpm fan cannot be drawn at 3000 rpm (that is 18000 deg/s, far past what any screen can show),
+            // so RPM is mapped monotonically onto 40..720 deg/s against the highest RPM seen so far. Falls back to the PWM percentage when no RPM is reported.
+            double want = 0;
+            if (rpm[i] > 0) { rpmRef[i] = qMax(rpmRef[i], double(rpm[i])); double f = qMin(1.0, rpm[i] / qMax(rpmRef[i], 4500.0)); want = 40 + 680 * pow(f, 0.9); }
+            else if (shown[i] >= 1) want = 60 + shown[i] * 6.0;
             speed[i] += (want - speed[i]) * ease(dt, 0.9);                   // inertia: spins up and coasts down over ~a second
             rot[i] = fmod(rot[i] + speed[i] * dt, 360.0);
-            if (gl[i]->isVisible()) { gl[i]->rot = rot[i]; gl[i]->col = pct[i] < 0 ? kDim : mix(kText, gAccent, shown[i] / 100.0); gl[i]->update(); }
+            if (gl[i]->isVisible()) {
+                gl[i]->col = pct[i] < 0 ? kDim : mix(kText, gAccent, shown[i] / 100.0);
+                double moved = fabs(rot[i] - lastDrawn[i]); if (moved > 180) moved = 360 - moved;
+                if (moved >= 0.6 || speed[i] > 20) { gl[i]->rot = rot[i]; lastDrawn[i] = rot[i]; gl[i]->update(); }     // a stopped or crawling fan costs no repaints at all
+            }
         }
         return bars;
     }
