@@ -119,12 +119,12 @@ BatteryPage::BatteryPage(QWidget *p) : AnimPage(p) {
 void BatteryPage::setHistory(const QVector<HistPoint> &pts, const QVector<HistEvent> &ev, const QString &note) { auto *h = static_cast<HistoryPanel *>(history); h->pts = pts; h->ev = ev; h->note = note; h->update(); }
 void BatteryPage::setRecommended(int percent) { if (charge->recommended != percent) { charge->recommended = percent; charge->update(); } }
 void BatteryPage::setExercise(const ExerciseView &v) {
-    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11").arg(v.enabled).arg(v.stage).arg(v.due).arg(v.never).arg(v.last, v.next, v.lowest).arg(v.usage, v.rule).arg(v.cap).arg(v.target) + (v.autoRun ? "A" : "M");
+    const QString sig = QString("%1|%2|%3|%4|%5|%6|%7|%8|%9|%10|%11").arg(v.enabled).arg(v.stage).arg(v.due).arg(v.never).arg(v.last, v.next, v.lowest).arg(v.usage, v.rule).arg(v.cap).arg(v.target) + (v.autoRun ? "A" : "M") + v.eta;
     if (sig == exSig) return; exSig = sig;                       // only touch the layout when something visible changed
     auto &R = exercise->rows; R[0].on = v.enabled; for (int i = 1; i <= 8; ++i) R[i].visible = v.enabled;
     R[1].value = v.usage; R[2].value = v.rule; R[3].value = v.last; R[4].value = v.next; R[5].value = v.lowest;
-    R[6].label = v.autoRun && v.stage == 1 ? QString("AUTOMATIC · STEP 1 OF 2 · CHARGING TO 100 %: nothing to do, keep the charger connected. Now %1 %.").arg(v.cap)
-               : v.autoRun && v.stage >= 2 ? QString("AUTOMATIC · STEP 2 OF 2 · DISCHARGING WITH THE CHARGER CONNECTED, down to %2 %. Now %1 %. Your laptop runs from the battery for a while; it recharges by itself afterwards and your normal charge limit comes back.").arg(v.cap).arg(v.target)
+    R[6].label = v.autoRun && v.stage == 1 ? QString("AUTOMATIC · STEP 1 OF 2 · CHARGING TO 100 %: nothing to do, keep the charger connected. Now %1 %.%2").arg(v.cap).arg(v.eta.isEmpty() ? QString() : " " + v.eta + ".")
+               : v.autoRun && v.stage >= 2 ? QString("AUTOMATIC · STEP 2 OF 2 · DISCHARGING WITH THE CHARGER CONNECTED, down to %2 %. Now %1 %.%3 The screen goes to full brightness and the CPU gets a light load so it drains faster; both are put back afterwards, and your normal charge limit comes back.").arg(v.cap).arg(v.target).arg(v.eta.isEmpty() ? QString() : " " + v.eta + ".")
                : v.stage == 1 ? QString("STEP 1 OF 2 · CHARGING TO 100 %: keep the charger connected. Now %1 %. I will tell you when to unplug.").arg(v.cap)
                : v.stage == 2 ? QString("STEP 2 OF 2 · DISCHARGING: unplug the charger and use the laptop normally. Now %1 %. I will tell you when to plug back in (at %2 %).").arg(v.cap).arg(v.target)
                : v.due ? QString("CALIBRATION DUE: when it suits you, press Start. It takes one charge and one normal day of use.")

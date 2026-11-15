@@ -106,6 +106,7 @@ lim_set() {   # lim_set <start> <end>   order matters on hysteresis drivers, so 
 # ── restore (always safe) ──
 do_restore() {
     local ok=1 s e
+    if [ -f "$LIB/backlight.orig" ]; then local bo bf; { read -r bo; read -r bf; } < "$LIB/backlight.orig"; [ -n "$bo" ] && [ -w "$bf" ] && echo "$bo" > "$bf"; rm -f "$LIB/backlight.orig"; fi
     if [ -n "$(wmi_dir)" ] || ensure_driver; then
         sim_bit 0 || { ok=0; log "WARNING: could not clear the adapter simulation bit"; }
     else
@@ -168,8 +169,35 @@ cmd_boot() {   # nothing to do unless a run was cut short
     ensure_driver; do_restore; unload_driver; st state=aborted "msg=A previous calibration was interrupted (restart or power loss). Everything was restored."; exit 0
 }
 
+
+# ── remaining-time estimate (MSI shows one too): (charge to go) / (current rate); falls back to the average rate of this stage ──
+fmt_eta() { local s=$1; [ "$s" -gt 0 ] 2>/dev/null || { echo "almost done"; return; }; if [ "$s" -ge 3600 ]; then echo "about $((s/3600)) h $(( (s%3600)/60 )) min left"; else echo "about $(( (s+59)/60 )) min left"; fi; }
+eta_secs() {   # eta_secs <target_percent> <stage_start_charge> <stage_start_seconds>
+    local tgt=$1 c0=$2 t0=$3 full now cur goal d el
+    full="$(charge_full)"; now="$(charge_now)"; cur="$(cur_abs)"; goal=$(( full * tgt / 100 )); d=$(( now - goal )); d=${d#-}
+    if [ "${cur:-0}" -gt 50000 ] 2>/dev/null; then echo $(( d * 3600 / cur )); return; fi
+    el=$(( SECONDS - t0 )); local moved=$(( now - c0 )); moved=${moved#-}
+    if [ "$el" -ge 60 ] && [ "$moved" -gt 0 ]; then echo $(( d * el / moved )); else echo -1; fi
+}
+
+# ── optional drain boost, as in MSI's tool: backlight to maximum + ~25 % load on every core so the discharge does not take all day ──
+BOOST_PIDS=(); BL_FILE=""; BL_ORIG=""
+boost_on() {
+    [ "${MCC_BOOST:-1}" = 0 ] && return 0
+    [ -f /etc/mcontrolcenter/no-calibration-boost ] && return 0
+    local b; for b in /sys/class/backlight/*; do [ -w "$b/brightness" ] && [ -r "$b/max_brightness" ] && { BL_FILE="$b/brightness"; BL_ORIG="$(cat "$b/brightness")"; cat "$b/max_brightness" > "$BL_FILE" 2>/dev/null; echo "$BL_ORIG" > "$LIB/backlight.orig"; echo "$BL_FILE" >> "$LIB/backlight.orig"; break; }; done
+    [ -n "${MCC_FAKE_REGS:-}" ] && return 0
+    local n i; n="$(nproc 2>/dev/null || echo 2)"
+    for i in $(seq 1 "$n"); do ( while :; do nice -n 19 timeout 0.05 sh -c 'while :; do :; done'; sleep 0.15; done ) & BOOST_PIDS+=($!); done
+}
+boost_off() {
+    local p; for p in "${BOOST_PIDS[@]:-}"; do [ -n "$p" ] && { pkill -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; }; done; BOOST_PIDS=()
+    if [ -n "$BL_FILE" ] && [ -n "$BL_ORIG" ]; then echo "$BL_ORIG" > "$BL_FILE" 2>/dev/null; fi; BL_FILE=""; BL_ORIG=""; rm -f "$LIB/backlight.orig"
+}
+
 cleanup() {
     local rc=$?
+    boost_off
     trap - EXIT INT TERM HUP
     do_restore
     local rr=$?
@@ -196,7 +224,7 @@ cmd_run() {
     # ── stage 1: charge to full (MSI: "Best for Mobility" first) ──
     st state=charging "msg=Charging to 100 %. Keep the charger connected." stage=1 floor="$floor"
     if lim_ok; then lim_set 99 100 || lim_set 95 100 || lim_set 90 100 || { REASON="Could not raise the charge limit"; exit 5; }; fi
-    ref="$(charge_now)"; last_prog=$SECONDS
+    ref="$(charge_now)"; last_prog=$SECONDS; local c0s="$ref" t0s=$SECONDS
     while :; do
         sleep "$POLL"
         [ "$(ac_online)" = 1 ] || { REASON="The charger was disconnected"; exit 7; }
@@ -209,7 +237,8 @@ cmd_run() {
             REASON="Charging made no progress for 20 minutes (is the charger weak, or the laptop too hot?)"; exit 8
         fi
         [ $(( SECONDS - t0 )) -ge 28800 ] && { REASON="Charging took longer than 8 hours"; exit 8; }
-        st state=charging "msg=Charging to 100 %. Keep the charger connected." stage=1
+        local e; e="$(eta_secs 100 "$c0s" "$t0s")"
+        st state=charging "msg=Charging to 100 %. Keep the charger connected.$([ "$e" -ge 0 ] 2>/dev/null && echo " $(fmt_eta "$e")")" stage=1 "eta=$e" "etatxt=$([ "$e" -ge 0 ] 2>/dev/null && fmt_eta "$e")"
     done
 
     # ── stage 2: simulate unplug, discharge to the floor ──
@@ -217,7 +246,8 @@ cmd_run() {
     sim_bit 1 || { REASON="The firmware did not accept the adapter simulation"; exit 9; }
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do [ "$(ac_online)" = 0 ] && break; sleep 1; done
     [ "$(ac_online)" = 0 ] || { REASON="The firmware accepted the command but still reports the charger as connected"; exit 9; }
-    ref="$(charge_now)"; last_prog=$SECONDS; local t1=$SECONDS reasserts=0 lastcheck=$SECONDS
+    boost_on
+    ref="$(charge_now)"; last_prog=$SECONDS; local t1=$SECONDS reasserts=0 lastcheck=$SECONDS c1s="$ref"
     while :; do
         sleep "$POLL"
         local c; c="$(cap)"
@@ -231,8 +261,10 @@ cmd_run() {
         if [ "$dif" -ge 15000 ]; then ref=$cn; last_prog=$SECONDS; fi
         [ $(( SECONDS - last_prog )) -ge "$STALL" ] && { REASON="The battery level did not change for 20 minutes"; exit 8; }
         [ $(( SECONDS - t1 )) -ge 36000 ] && { REASON="Discharging took longer than 10 hours"; exit 8; }
-        st state=discharging "msg=Discharging to $floor % with the charger still connected." stage=2
+        local e; e="$(eta_secs "$floor" "$c1s" "$t1")"
+        st state=discharging "msg=Discharging to $floor % with the charger still connected.$([ "$e" -ge 0 ] 2>/dev/null && echo " $(fmt_eta "$e")")" stage=2 "eta=$e" "etatxt=$([ "$e" -ge 0 ] 2>/dev/null && fmt_eta "$e")"
     done
+    boost_off
 
     # ── stage 3: hand everything back ──
     local endpct; endpct="$(cap)"

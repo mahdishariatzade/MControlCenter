@@ -49,7 +49,7 @@ private:
 #include <QDate>
 struct HistPoint { QDate day; double health = 0; int cycles = 0; };
 struct HistEvent { QDate day; QString label; };
-struct ExerciseView { bool enabled = true; int stage = 0; bool due = false, never = true; QString last = "never", next = "—", lowest = "—", usage = "still learning", rule = "every 3 months"; int cap = 0, target = 20; bool autoRun = false; };
+struct ExerciseView { bool enabled = true; int stage = 0; bool due = false, never = true; QString last = "never", next = "—", lowest = "—", usage = "still learning", rule = "every 3 months"; int cap = 0, target = 20; bool autoRun = false; QString eta; };
 class BatteryPage : public AnimPage {
 public:
     explicit BatteryPage(QWidget *p);

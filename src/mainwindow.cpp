@@ -1563,7 +1563,7 @@ void MainWindow::exerciseSave() {
     Settings::setValue("Cal/acSec", exAcSec); Settings::setValue("Cal/batSec", exBatSec); exLastSave = secsNow();
 }
 ExerciseView MainWindow::exerciseView() const {
-    ExerciseView v; v.enabled = exEnabled; v.stage = exStage; v.cap = rgbBattery; v.target = kCalTarget; v.never = exLast == 0; v.autoRun = exAuto;
+    ExerciseView v; v.enabled = exEnabled; v.stage = exStage; v.cap = rgbBattery; v.target = kCalTarget; v.never = exLast == 0; v.autoRun = exAuto; v.eta = exAutoEta;
     v.last = exLast ? QDateTime::fromSecsSinceEpoch(exLast).toString("d MMM yyyy") : QString("never");
     const int days = calIntervalDays(); const qint64 base = exLast ? exLast : exSince; const qint64 due = base + days * 86400LL;
     v.next = QDateTime::fromSecsSinceEpoch(due).toString("d MMM yyyy"); v.due = exEnabled && secsNow() >= due;
@@ -1648,7 +1648,7 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
         }
         if (!exAuto && !exProc && !exStage && active && fresh) { exAuto = true; }
         if (exAuto && !exProc) {
-            if (active && fresh) { exStage = state == "charging" || state == "starting" ? 1 : 2; exAutoMsg = kv.value("msg"); }
+            if (active && fresh) { exStage = state == "charging" || state == "starting" ? 1 : 2; exAutoMsg = kv.value("msg"); exAutoEta = kv.value("etatxt"); }
             else if (active && !fresh) { exAuto = false; exStage = 0; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("The calibration service stopped unexpectedly. Your charger state is restored at the next boot at the latest; you can also run: pkexec mcontrolcenter-battery restore"), QSystemTrayIcon::Warning, 12000); }
             else if (state == "done") { exAuto = false; exStage = 0; exLast = now; exerciseSave(); historyAppend(QString("C,%1,%2,%3,%4").arg(QDate::currentDate().toString(Qt::ISODate), kv.value("endpct"), kv.value("full_before"), kv.value("full_after"))); if (trayIcon) trayIcon->showMessage("MControlCenter", kv.value("msg"), QSystemTrayIcon::Information, 14000); }
             else if (state == "aborted" || state == "error" || state == "cancelled") { exAuto = false; exStage = 0; exerciseSave(); if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Calibration stopped: %1").arg(kv.value("msg")), QSystemTrayIcon::Warning, 14000); }
