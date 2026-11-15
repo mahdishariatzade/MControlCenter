@@ -18,6 +18,7 @@
 
 #include "mainwindow.h"
 #include <QApplication>
+#include "a11y.h"
 #include <QFontDatabase>
 #include <QTranslator>
 #include <QDBusConnectionInterface>
@@ -39,6 +40,7 @@ int main(int argc, char *argv[]) {
     }
 
     QApplication a(argc, argv);
+    installAccessibility();
     for (const char *f : {"Rajdhani-Medium", "Rajdhani-SemiBold", "Rajdhani-Bold", "IBMPlexMono-Regular", "IBMPlexMono-Medium"})
         QFontDatabase::addApplicationFont(QString(":/fonts/%1.ttf").arg(f));
 

@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 - install.sh restarts the root helper so updates take effect
 - Notifications: CPU throttling alert; alert when the battery charge limit is changed by something other than this app
 - Optional desktop companion widget (early placeholder)
+- Accessibility: every custom-drawn control is now reachable by keyboard (Tab between panels; arrows inside; Space/Enter to press; sliders and the fan curve with arrow keys) with a visible focus ring, and exposed to screen readers (Orca/AT-SPI) as real switches, buttons, radio buttons and sliders; the page tabs are focusable; panels read out their live values
 
 ## [0.6.0] 2026-11-15 (fork, p34t1k/MControlCenter)
 - Redesigned UI (dashboard, Controls, Battery, Fans, Lighting, Displays, Settings), Plasma Power & Battery applet, session D-Bus API

@@ -39,6 +39,7 @@ set(PROJECT_SOURCES
     src/dashboard.cpp src/dashboard.h src/theme.h
     src/sensors.cpp src/sensors.h
     src/pages.cpp src/pages.h src/uikit.h
+    src/a11y.cpp src/a11y.h
     src/rgb.cpp src/rgb.h
     src/keyboard.cpp src/keyboard.h
     src/lighting.cpp
@@ -126,3 +127,11 @@ set(CPACK_RPM_PRE_UNINSTALL_SCRIPT_FILE "${CMAKE_SOURCE_DIR}/packaging/scripts/p
 set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_SOURCE_DIR}/packaging/scripts/postrm")
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/usr/share/applications;/usr/libexec;/usr/src;/usr/lib/systemd;/usr/lib/systemd/system;/usr/lib/udev;/usr/lib/udev/rules.d;/usr/lib/modules-load.d;/usr/share/polkit-1;/usr/share/polkit-1/actions;/usr/share/dbus-1;/usr/share/dbus-1/system.d;/usr/share/dbus-1/system-services;/usr/share/metainfo;/usr/share/icons;/usr/share/icons/hicolor;/usr/share/icons/hicolor/scalable;/usr/share/icons/hicolor/scalable/apps;/etc/xdg;/etc/xdg/autostart")
 include(CPack)
+
+# Optional: keyboard/accessibility unit test (not built by default). cmake --build build --target a11y_test && QT_QPA_PLATFORM=offscreen build/a11y_test
+find_package(Qt6 QUIET COMPONENTS Test)
+if(Qt6Test_FOUND)
+    qt_add_executable(a11y_test EXCLUDE_FROM_ALL tests/a11y-test.cpp src/a11y.cpp src/a11y.h src/uikit.h)
+    target_link_libraries(a11y_test PRIVATE Qt6::Widgets Qt6::Test)
+    set_target_properties(a11y_test PROPERTIES AUTOMOC ON)
+endif()

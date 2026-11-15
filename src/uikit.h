@@ -5,6 +5,10 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
+#include <QKeyEvent>
+#include <QFocusEvent>
+#include <QTimer>
+#include <QAccessible>
 #include <QFile>
 #include <QtMath>
 #include <QFontMetricsF>
@@ -13,6 +17,20 @@
 #include <cmath>
 
 namespace kit {
+// ── accessibility: every custom-painted widget describes itself (and its virtual children) through this small interface; src/a11y.cpp turns it into AT-SPI/UIA objects ──
+struct A11yEntry {
+    QString name, desc, value; QAccessible::Role role = QAccessible::StaticText; QAccessible::State st; QRect rect;   // rect in widget coordinates
+    bool canAct = false, slider = false; int vmin = 0, vmax = 0, val = 0, step = 1;
+};
+struct A11yHost {
+    virtual ~A11yHost() = default;
+    virtual QString a11yName() const = 0;
+    virtual QString a11yDesc() const { return {}; }
+    virtual std::vector<A11yEntry> a11yEntries() const { return {}; }
+    virtual void a11yAct(int) {}              // default action of entry i (toggle / press / select)
+    virtual void a11ySet(int, int) {}         // set a slider entry
+    virtual int a11yFocusEntry() const { return -1; }
+};
 // ── palette: warm graphite, bone-white text, ONE accent that follows the mode ──
 inline const QColor kBg(14, 15, 17), kPanel(21, 23, 26), kLine(255, 255, 255, 38), kText(233, 230, 223), kDim(139, 143, 150), kHot(255, 70, 50);
 inline const QColor kAccentMode[4] = {QColor(255, 75, 31), QColor(231, 224, 205), QColor(110, 170, 215), QColor(150, 205, 90)};   // turbo, balanced, silent, eco
@@ -60,9 +78,10 @@ inline QColor glassAt(double t) { const QColor top(31, 33, 38), bot(18, 19, 22);
 
 
 // ───────────────────────────── panel base: chamfered frame, index + title, entrance animation ─────────────────────────────
-class Panel : public QWidget {
+class Panel : public QWidget, public A11yHost {
 public:
     Panel(const QString &idx, const QString &title, QWidget *p) : QWidget(p), idx(idx), title(title) { icon = iconForTitle(title); setMouseTracking(true); }
+    QString a11yName() const override { return title; }
     QString idx, title; int icon = IcNone; double reveal = 0, hov = 0, delay = 0; bool hovering = false; std::function<void()> wake;   // wake: lets an idle page restart its animation timer
     bool tick(double clock, double dt) { reveal = gReduceMotion ? 1 : easeOut((clock - delay) / 0.38); double old = hov; hov += ((hovering ? 1 : 0) - hov) * (gReduceMotion ? 1.0 : ease(dt, 0.07)); return reveal < 1 || fabs(hov - old) > 0.002; }
 protected:
@@ -91,16 +110,40 @@ protected:
 
 
 // ───────────────────────────── tile strip (modes / presets) ─────────────────────────────
-class TileStrip : public QWidget {
+class TileStrip : public QWidget, public A11yHost {
 public:
     struct Item { QString label, sub; QColor accent; bool enabled = true; bool visible = true; };
-    TileStrip(bool checkable, QWidget *p) : QWidget(p), checkable(checkable) { setMouseTracking(true); setFixedHeight(checkable ? 58 : 46); }
+    TileStrip(bool checkable, QWidget *p) : QWidget(p), checkable(checkable) { setMouseTracking(true); setFixedHeight(checkable ? 58 : 46); setFocusPolicy(Qt::StrongFocus); }
+    // keyboard: Left/Right move between tiles, Space/Enter choose; screen readers see one button / radio button per tile
+    QString a11yName() const override { return controls ? (checkable ? "Modes" : "Quick setups") : "Status"; }
+    std::vector<A11yEntry> a11yEntries() const override {
+        std::vector<A11yEntry> v; for (int i = 0; i < (int) items.size(); ++i) { if (!items[i].visible) continue; const Item &it = items[i]; A11yEntry e;
+            e.name = it.label; e.desc = it.sub + (!checkable && i == active ? " (active)" : ""); e.role = checkable ? QAccessible::RadioButton : QAccessible::Button; e.canAct = controls && it.enabled;
+            e.st.focusable = e.canAct; e.st.checkable = checkable; e.st.checked = checkable && i == checked; e.st.disabled = !e.canAct; e.st.focused = hasFocus() && i == kTile; e.rect = rectOf(i).toRect(); v.push_back(e); }
+        return v; }
+    void a11yAct(int n) override { int k = 0; for (int i = 0; i < (int) items.size(); ++i) { if (!items[i].visible) continue; if (k++ == n) { if (controls && items[i].enabled && onClick) onClick(i); return; } } }
+    int a11yFocusEntry() const override { int k = 0; for (int i = 0; i < (int) items.size(); ++i) { if (!items[i].visible) continue; if (i == kTile) return k; ++k; } return -1; }
     std::vector<Item> items; int checked = -1, active = -1; bool controls = false; double delay = 0, reveal = 0; std::function<void(int)> onClick;   // active: an action tile whose result is currently in effect
     std::vector<double> hov, press;
     void setItems(std::vector<Item> v) { items = std::move(v); hov.assign(items.size(), 0); press.assign(items.size(), 0); update(); }
     bool tick(double clock, double dt) { reveal = gReduceMotion ? 1 : easeOut((clock - delay) / 0.38); bool act = reveal < 1; for (size_t i = 0; i < items.size(); ++i) { double h = hov[i]; hov[i] += (((int) i == hot ? 1 : 0) - hov[i]) * ease(dt, 0.07); press[i] *= exp(-dt / 0.1); act |= fabs(hov[i] - h) > 0.002 || press[i] > 0.01; } return act; }
 protected:
-    int hot = -1; bool checkable;
+    int hot = -1, kTile = -1; bool checkable;
+    int stepTile(int from, int dir) const { for (int i = from + dir; i >= 0 && i < (int) items.size(); i += dir) if (items[i].visible && items[i].enabled) return i; return -1; }
+    void announce() { QAccessibleEvent ev(this, QAccessible::Focus); ev.setChild(a11yFocusEntry()); QAccessible::updateAccessibility(&ev); update(); }
+    void focusInEvent(QFocusEvent *e) override {
+        if (!controls) { if (e->reason() == Qt::BacktabFocusReason) focusPreviousChild(); else focusNextChild(); return; }
+        if (kTile < 0 || kTile >= (int) items.size() || !items[kTile].enabled) kTile = checkable && checked >= 0 ? checked : stepTile(-1, 1);
+        announce(); }
+    void focusOutEvent(QFocusEvent *) override { update(); }
+    void keyPressEvent(QKeyEvent *e) override {
+        if (!controls) { QWidget::keyPressEvent(e); return; }
+        switch (e->key()) {
+            case Qt::Key_Left: case Qt::Key_Up: { int n = stepTile(kTile, -1); if (n >= 0) { kTile = n; announce(); } return; }
+            case Qt::Key_Right: case Qt::Key_Down: { int n = stepTile(kTile, 1); if (n >= 0) { kTile = n; announce(); } return; }
+            case Qt::Key_Space: case Qt::Key_Return: case Qt::Key_Enter: if (kTile >= 0 && items[kTile].enabled && onClick) { press[kTile] = 1; onClick(kTile); announce(); } return;
+            default: QWidget::keyPressEvent(e);
+        } }
     int visibleCount() const { int n = 0; for (auto &i : items) n += i.visible; return n; }
     QRectF rectOf(int idx) const {
         int n = visibleCount(), k = 0; if (!n) return {}; double gap = 8, w = (width() - gap * (n - 1)) / n;
@@ -125,6 +168,7 @@ protected:
             p.setFont(fnt(MONO, 10, QFont::Normal, 0)); p.setPen(on ? alpha(kBg, 0.7) : kDim); p.drawText(QRectF(r.left() + 14, r.top() + (checkable ? 32 : 26), r.width() - 28, 16), Qt::AlignLeft | Qt::AlignVCenter, it.sub);
             if (checkable) { p.setFont(fnt(MONO, 10, QFont::Medium, 1)); p.setPen(on ? alpha(kBg, 0.8) : alpha(kDim, 0.7)); p.drawText(QRectF(r.right() - 38, r.top() + 8, 28, 14), Qt::AlignRight, QString("M%1").arg(i + 1)); }
             else if (act) { p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(ac); p.drawText(QRectF(r.right() - 80, r.top() + 6, 68, 14), Qt::AlignRight, "ACTIVE"); }
+            if (hasFocus() && i == kTile) { p.setBrush(Qt::NoBrush); p.setPen(QPen(on ? kBg : kText, 1.5, Qt::DashLine)); p.drawRect(r.adjusted(4, 4, -4, -4)); }   // keyboard focus ring
         }
     }
 };
@@ -154,8 +198,33 @@ struct Row {
 
 class RowsPanel : public Panel {
 public:
-    RowsPanel(const QString &idx, const QString &title, QWidget *p) : Panel(idx, title, p) { setMouseTracking(true); }
+    RowsPanel(const QString &idx, const QString &title, QWidget *p) : Panel(idx, title, p) { setMouseTracking(true); setFocusPolicy(Qt::StrongFocus); }
     std::vector<Row> rows;
+    // ── keyboard + screen reader support ──
+    // Up/Down move between controls, Left/Right change a choice or nudge a slider, Space/Enter press a button or flip a switch.
+    // a11y entries: one per visible row (a choice row contributes one radio button per option)
+    struct Ent { int row, opt; };
+    std::vector<Ent> ents() const { std::vector<Ent> v; for (int i = 0; i < (int) rows.size(); ++i) { const Row &r = rows[i]; if (!r.visible || r.type == Row::Gap) continue; if (r.type == Row::Segment) for (int k = 0; k < (int) r.opts.size(); ++k) v.push_back({i, k}); else v.push_back({i, 0}); } return v; }
+    QRectF rowRectF(int ri) const { double y = 35; for (int i = 0; i < ri; ++i) y += rowHeight(rows[i]); return QRectF(19, y, qMax(100, width() - 2 - 36), rowHeight(rows[ri])); }
+    static bool isStop(const Row &r) { return r.visible && r.enabled && (r.type == Row::Switch || r.type == Row::Button || r.type == Row::Slider || (r.type == Row::Segment && !r.opts.empty())); }
+    QString a11yName() const override { return title; }
+    std::vector<A11yEntry> a11yEntries() const override {
+        std::vector<A11yEntry> v;
+        for (const Ent &n : ents()) { const Row &r = rows[n.row]; A11yEntry e; QRectF rr = rowRectF(n.row); e.rect = rr.toRect(); e.name = r.label; e.desc = r.sub; e.canAct = r.enabled; e.st.focusable = isStop(r); e.st.disabled = !r.enabled; e.st.focused = hasFocus() && n.row == kRow && (r.type != Row::Segment || n.opt == kOpt);
+            switch (r.type) {
+                case Row::Switch: e.role = QAccessible::CheckBox; e.st.checkable = true; e.st.checked = r.on; break;
+                case Row::Button: e.role = QAccessible::Button; e.canAct = r.enabled && bool(r.click); break;
+                case Row::Slider: e.role = QAccessible::Slider; e.slider = true; e.vmin = 0; e.vmax = r.vmax; e.val = r.val; e.value = r.value.isEmpty() ? QString::number(r.val) : r.value; break;
+                case Row::Segment: { e.role = QAccessible::RadioButton; e.name = (r.label.isEmpty() ? QString() : r.label + ": ") + r.opts[n.opt]; e.st.checkable = true; e.st.checked = n.opt == r.sel; double w = rr.width() / r.opts.size(); e.rect = QRectF(rr.left() + n.opt * w, rr.bottom() - 36, w, 34).toRect(); break; }
+                case Row::Info: e.role = QAccessible::StaticText; e.name = r.label + ": " + (r.value.isEmpty() ? QStringLiteral("none") : r.value); e.canAct = false; break;
+                case Row::Text: e.role = QAccessible::StaticText; e.name = r.label; e.desc.clear(); e.canAct = false; break;
+                default: break;
+            }
+            v.push_back(e); }
+        return v; }
+    void a11yAct(int n) override { auto es = ents(); if (n < 0 || n >= (int) es.size()) return; activate(es[n].row, es[n].opt); }
+    void a11ySet(int n, int v) override { auto es = ents(); if (n < 0 || n >= (int) es.size()) return; Row &r = rows[es[n].row]; if (r.type == Row::Slider && r.enabled) { r.val = qBound(0, v, r.vmax); update(); if (r.pick) r.pick(r.val); } }
+    int a11yFocusEntry() const override { auto es = ents(); for (int i = 0; i < (int) es.size(); ++i) if (es[i].row == kRow && (rows[kRow].type != Row::Segment || es[i].opt == kOpt)) return i; return -1; }
     bool animate(double dt) {                                     // eases the switches; true while anything moves
         bool moving = false;
         for (auto &r : rows) if (r.type == Row::Switch) { double t = r.on ? 1 : 0, o = r.anim; r.anim += (t - r.anim) * ease(dt, 0.06); if (fabs(t - r.anim) < 0.01) r.anim = t; moving |= o != r.anim; }
@@ -164,7 +233,34 @@ public:
     void relayout() { int h = 38 + 16; for (size_t i = 0; i < rows.size(); ++i) h += int(rowHeight(rows[i])); setMinimumHeight(h); updateGeometry(); update(); }
 protected:
     struct Hit { QRectF r; int row, opt; };
-    std::vector<Hit> hits; int hoverRow = -1, hoverOpt = -1, dragRow = -1; QRectF dragTrack;
+    std::vector<Hit> hits; int hoverRow = -1, hoverOpt = -1, dragRow = -1, kRow = -1, kOpt = 0; QRectF dragTrack; int sliderTok = 0;
+    void activate(int ri, int opt) {
+        Row &r = rows[ri]; if (!r.enabled) return;
+        if (r.type == Row::Segment) { if (opt != r.sel && r.pick) r.pick(opt); }
+        else if (r.type == Row::Switch || r.type == Row::Button) { if (r.click) r.click(); }
+        if (wake) wake(); update(); announceFocus(); }
+    int stepStop(int from, int dir) const { for (int i = from + dir; i >= 0 && i < (int) rows.size(); i += dir) if (isStop(rows[i])) return i; return -1; }
+    void announceFocus() { QAccessibleEvent ev(this, QAccessible::Focus); ev.setChild(a11yFocusEntry()); QAccessible::updateAccessibility(&ev); update(); }
+    void nudge(int ri, int d) {                                     // keyboard slider: apply now, commit (EC write) once the key stops repeating
+        Row &r = rows[ri]; int v = qBound(0, r.val + d, r.vmax); if (v == r.val) return; r.val = v; update(); int tok = ++sliderTok;
+        QTimer::singleShot(450, this, [this, ri, tok] { if (tok == sliderTok && ri < (int) rows.size() && rows[ri].pick) rows[ri].pick(rows[ri].val); }); announceFocus(); }
+    void focusInEvent(QFocusEvent *e) override {
+        if (stepStop(-1, 1) < 0) { if (e->reason() == Qt::BacktabFocusReason) focusPreviousChild(); else focusNextChild(); return; }   // nothing to operate here: pass focus on
+        if (kRow < 0 || kRow >= (int) rows.size() || !isStop(rows[kRow])) { kRow = e->reason() == Qt::BacktabFocusReason ? [this] { int l = -1; for (int i = 0; i < (int) rows.size(); ++i) if (isStop(rows[i])) l = i; return l; }() : stepStop(-1, 1); kOpt = 0; }
+        if (rows[kRow].type == Row::Segment) kOpt = qBound(0, rows[kRow].sel, (int) rows[kRow].opts.size() - 1);
+        announceFocus(); }
+    void focusOutEvent(QFocusEvent *) override { update(); }
+    void keyPressEvent(QKeyEvent *e) override {
+        if (kRow < 0 || kRow >= (int) rows.size()) { QWidget::keyPressEvent(e); return; }
+        Row &r = rows[kRow]; const int big = (e->modifiers() & Qt::ShiftModifier) ? 10 : 1;
+        switch (e->key()) {
+            case Qt::Key_Up: { int n = stepStop(kRow, -1); if (n >= 0) { kRow = n; kOpt = rows[n].type == Row::Segment ? qBound(0, rows[n].sel, (int) rows[n].opts.size() - 1) : 0; announceFocus(); } return; }
+            case Qt::Key_Down: { int n = stepStop(kRow, 1); if (n >= 0) { kRow = n; kOpt = rows[n].type == Row::Segment ? qBound(0, rows[n].sel, (int) rows[n].opts.size() - 1) : 0; announceFocus(); } return; }
+            case Qt::Key_Left: if (r.type == Row::Segment) { kOpt = qMax(0, kOpt - 1); announceFocus(); } else if (r.type == Row::Slider) nudge(kRow, -big); return;
+            case Qt::Key_Right: if (r.type == Row::Segment) { kOpt = qMin((int) r.opts.size() - 1, kOpt + 1); announceFocus(); } else if (r.type == Row::Slider) nudge(kRow, big); return;
+            case Qt::Key_Space: case Qt::Key_Return: case Qt::Key_Enter: if (r.type != Row::Slider) activate(kRow, kOpt); return;
+            default: QWidget::keyPressEvent(e);
+        } }
     void setSliderFromX(double x) { Row &r = rows[dragRow]; double f = qBound(0.0, (x - dragTrack.left()) / qMax(1.0, dragTrack.width()), 1.0); int v = int(f * r.vmax + 0.5); if (v != r.val) { r.val = v; update(); } if (wake) wake(); }
     double bodyW() const { return qMax(200, width() - 38 - 36); }
     double rowHeight(const Row &r) const {
@@ -243,6 +339,12 @@ protected:
                     if (r.enabled) { double kx = bar.left() + f * bar.width(); p.setPen(QPen(kText, 2)); p.drawLine(QPointF(kx, bar.top() - 4), QPointF(kx, bar.bottom() + 4)); }
                     hits.push_back({bar.adjusted(0, -10, 0, 10), (int) i, 0}); break; }
                 case Row::Gap: break;
+            }
+            if (hasFocus() && (int) i == kRow) {                          // keyboard focus ring
+                QRectF fr = rr.adjusted(-6, 2, 6, -2);
+                if (r.type == Row::Segment) { for (auto &h : hits) if (h.row == kRow && h.opt == kOpt) fr = h.r.adjusted(-3, -3, 3, 3); }
+                else if (r.type == Row::Button) { for (auto &h : hits) if (h.row == kRow) fr = h.r.adjusted(-3, -3, 3, 3); }
+                p.setBrush(Qt::NoBrush); p.setPen(QPen(kText, 1.5, Qt::DashLine)); p.drawRect(fr);
             }
             if (r.type == Row::Switch && i + 1 < rows.size()) { p.setPen(QPen(alpha(kText, 0.07), 1, Qt::DotLine)); p.drawLine(QPointF(rr.left(), rr.bottom() - 1), QPointF(rr.right(), rr.bottom() - 1)); }
             y += h;

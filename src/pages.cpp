@@ -29,11 +29,31 @@ static std::vector<QString> modeNames() { return {"Turbo", "Balanced", "Silent",
 // ───────────────────────────── charge limit ─────────────────────────────
 class ChargePanel : public Panel {
 public:
-    ChargePanel(QWidget *p) : Panel("", "CHARGE LIMIT", p) { setMinimumHeight(300); }
+    ChargePanel(QWidget *p) : Panel("", "CHARGE LIMIT", p) { setMinimumHeight(300); setFocusPolicy(Qt::StrongFocus); }
+    // accessibility: the limit is a slider (Left/Right 5 %, Home 60 %, End 100 %) and the three MSI presets are buttons
+    QString a11yDesc() const override { return supported ? QString("Battery charge limit %1 percent. Left and Right change it by 5, Home sets 60, End sets 100.").arg(limit) : QString("Not available on this laptop."); }
+    std::vector<A11yEntry> a11yEntries() const override {
+        std::vector<A11yEntry> v; A11yEntry s; s.name = "Charge limit"; s.role = QAccessible::Slider; s.slider = true; s.vmin = 30; s.vmax = 100; s.step = 5; s.val = limit; s.value = QString("%1 %").arg(limit);
+        s.canAct = supported; s.st.focusable = supported; s.st.disabled = !supported; s.st.focused = hasFocus(); s.rect = track.adjusted(-8, -22, 8, 22).toRect(); v.push_back(s);
+        const int pv[3] = {60, 80, 100}; const char *nm[3] = {"Best for Battery", "Balanced", "Best for Mobility"};
+        for (int i = 0; i < 3; ++i) { A11yEntry e; e.name = QString("%1, %2 percent").arg(nm[i]).arg(pv[i]); e.desc = recommended == pv[i] ? "MSI recommends this" : QString(); e.role = QAccessible::RadioButton; e.canAct = supported; e.st.checkable = true; e.st.checked = limit == pv[i]; e.st.disabled = !supported; e.rect = chips[i].toRect(); v.push_back(e); }
+        return v; }
+    void a11yAct(int n) override { const int pv[3] = {60, 80, 100}; if (supported && n >= 1 && n <= 3) { limit = pv[n - 1]; update(); if (onCommit) onCommit(limit); } }
+    void a11ySet(int n, int v) override { if (supported && n == 0) { limit = qBound(30, int(round(v / 5.0)) * 5, 100); update(); if (onCommit) onCommit(limit); } }
+    int a11yFocusEntry() const override { return hasFocus() ? 0 : -1; }
     int limit = 100, drag = -1, recommended = 0; bool supported = true; std::function<void(int)> onCommit;
     void setValue(int v) { if (drag < 0) limit = v; }
 protected:
-    QRectF track; QRectF chips[3];
+    QRectF track; QRectF chips[3]; int keyTok = 0;
+    void focusInEvent(QFocusEvent *) override { if (!supported) { focusNextChild(); return; } QAccessibleEvent ev(this, QAccessible::Focus); ev.setChild(0); QAccessible::updateAccessibility(&ev); update(); }
+    void focusOutEvent(QFocusEvent *) override { update(); }
+    void keyPressEvent(QKeyEvent *e) override {
+        if (!supported) { QWidget::keyPressEvent(e); return; }
+        int v = limit;
+        switch (e->key()) { case Qt::Key_Left: case Qt::Key_Down: v -= 5; break; case Qt::Key_Right: case Qt::Key_Up: v += 5; break; case Qt::Key_Home: v = 60; break; case Qt::Key_End: v = 100; break; default: QWidget::keyPressEvent(e); return; }
+        v = qBound(30, v, 100); if (v == limit) return; limit = v; update(); int tok = ++keyTok;                     // commit once the key stops repeating (each commit is an EC write)
+        QTimer::singleShot(600, this, [this, tok] { if (tok == keyTok && onCommit) onCommit(limit); }); QAccessibleEvent ev(this, QAccessible::ValueChanged); QAccessible::updateAccessibility(&ev);
+    }
     int valueAt(double x) const { double f = qBound(0.0, (x - track.left()) / track.width(), 1.0); return qBound(30, int(round((30 + f * 70) / 5.0) * 5), 100); }
     void mousePressEvent(QMouseEvent *e) override {
         if (!supported) return; const int pv[3] = {60, 80, 100};
@@ -54,6 +74,7 @@ protected:
         track = QRectF(b.left(), b.top() + 124, b.width(), 22);
         const int n = 35; double gap = 3, w = (track.width() - gap * (n - 1)) / n; double f = (limit - 30) / 70.0;
         for (int i = 0; i < n; ++i) { QRectF s(track.left() + i * (w + gap), track.top(), w, track.height()); bool on = (i + 0.5) / n <= f + 0.001; p.setPen(Qt::NoPen); p.setBrush(on ? (supported ? kText : kDim) : alpha(kText, 0.10)); p.drawRect(s); }
+        if (hasFocus()) { p.setBrush(Qt::NoBrush); p.setPen(QPen(kText, 1.5, Qt::DashLine)); p.drawRect(track.adjusted(-6, -22, 6, 22)); }
         double hx = track.left() + f * track.width(); p.setPen(QPen(gAccent, 3)); p.drawLine(QPointF(hx, track.top() - 10), QPointF(hx, track.bottom() + 10));
         p.setBrush(gAccent); p.setPen(Qt::NoPen); QPolygonF tri; tri << QPointF(hx - 6, track.top() - 18) << QPointF(hx + 6, track.top() - 18) << QPointF(hx, track.top() - 8); p.drawPolygon(tri);
         p.setFont(fnt(MONO, 10)); p.setPen(kDim); for (int v : {30, 40, 60, 80, 100}) { double x = track.left() + (v - 30) / 70.0 * track.width(); p.drawText(QRectF(x - 20, track.bottom() + 14, 40, 14), Qt::AlignCenter, QString::number(v)); }
@@ -73,6 +94,7 @@ class HistoryPanel : public Panel {
 public:
     HistoryPanel(QWidget *p) : Panel("", "HEALTH HISTORY", p) { setMinimumHeight(250); }
     QVector<HistPoint> pts; QVector<HistEvent> ev; QString note;
+    QString a11yDesc() const override { if (pts.size() < 2) return "Battery health history: not enough days recorded yet."; return QString("Battery health history over %1 days: %2 percent at the start, %3 percent now. %4 calibrations marked.").arg(pts.first().day.daysTo(pts.last().day)).arg(pts.first().health, 0, 'f', 1).arg(pts.last().health, 0, 'f', 1).arg(ev.size()); }
 protected:
     void paintBody(QPainter &p, const QRectF &b) override {
         QRectF g(b.left() + 34, b.top() + 8, b.width() - 44, b.height() - 56);
@@ -140,11 +162,44 @@ void BatteryPage::setHealth(const QString &status, const QString &health, const 
 // ───────────────────────────── fan curve editor ─────────────────────────────
 class CurvePanel : public Panel {
 public:
-    CurvePanel(QWidget *p) : Panel("", "FAN CURVE", p) { setMinimumHeight(330); }
+    CurvePanel(QWidget *p) : Panel("", "FAN CURVE", p) { setMinimumHeight(330); setFocusPolicy(Qt::StrongFocus); }
+    // keyboard: Left/Right pick a speed step, a temperature step, Reset or Apply; Up/Down change the value (Shift = 10); Enter presses a button.
+    // screen readers get 7 speed sliders, 6 temperature sliders and the two buttons.
+    QString a11yDesc() const override { return enabled ? QString("Fan curve editor for the %1 fan. Left and Right choose a point, Up and Down change it.").arg(fan ? "GPU" : "CPU") : QString("Showing the current fan table. Turn on advanced fan control to edit it."); }
+    std::vector<A11yEntry> a11yEntries() const override {
+        std::vector<A11yEntry> v; if (!ready()) return v; const QString who = fan ? "GPU fan" : "CPU fan";
+        for (int i = 0; i < 7; ++i) { A11yEntry e; e.role = QAccessible::Slider; e.slider = true; e.canAct = enabled; e.vmin = 0; e.vmax = int(SMAX); e.val = sp[fan][i]; e.value = QString("%1 percent").arg(sp[fan][i]);
+            e.name = QString("%1 speed, step %2 (from %3 degrees)").arg(who).arg(i + 1).arg(int(segStart(i))); e.st.focusable = enabled; e.st.disabled = !enabled; e.st.focused = hasFocus() && kIdx == i;
+            e.rect = QRectF(X((segStart(i) + segEnd(i)) / 2) - 13, Y(sp[fan][i]) - 13, 26, 26).toRect(); v.push_back(e); }
+        for (int k = 0; k < 6; ++k) { A11yEntry e; e.role = QAccessible::Slider; e.slider = true; e.canAct = enabled; e.vmin = int(TMIN) + 1; e.vmax = int(TMAX) - 1; e.val = tp[fan][k]; e.value = QString("%1 degrees").arg(tp[fan][k]);
+            e.name = QString("%1 temperature threshold %2").arg(who).arg(k + 1); e.st.focusable = enabled; e.st.disabled = !enabled; e.st.focused = hasFocus() && kIdx == 7 + k; e.rect = QRectF(X(tp[fan][k]) - 11, plot.bottom() - 4, 22, 24).toRect(); v.push_back(e); }
+        A11yEntry r; r.role = QAccessible::Button; r.name = "Reset"; r.canAct = true; r.st.focusable = true; r.st.focused = hasFocus() && kIdx == 13; r.rect = bReset.toRect(); v.push_back(r);
+        A11yEntry a; a.role = QAccessible::Button; a.name = "Apply"; a.canAct = dirty; a.st.focusable = true; a.st.disabled = !dirty; a.st.focused = hasFocus() && kIdx == 14; a.rect = bApply.toRect(); v.push_back(a);
+        return v; }
+    void a11yAct(int n) override { if (n == 13 && onReset) onReset(); else if (n == 14 && dirty && onApply) onApply(); }
+    void a11ySet(int n, int val) override { if (!enabled || !ready()) return; if (n >= 0 && n < 7) setSpeed(n, val); else if (n >= 7 && n < 13) setTemp(n - 7, val); }
+    int a11yFocusEntry() const override { return hasFocus() ? kIdx : -1; }
     QVector<int> sp[2], tp[2]; int fan = 0; bool enabled = false, dirty = false; double liveT[2] = {0, 0}, liveP[2] = {-1, -1};
     std::function<void()> onEdit, onApply, onReset;
 protected:
     static constexpr double TMIN = 20, TMAX = 105, SMAX = 150;
+    int kIdx = 0;
+    void touched() { dirty = true; if (onEdit) onEdit(); update(); }
+    void setSpeed(int i, int v) { sp[fan][i] = qBound(0, v, int(SMAX)); touched(); }
+    void setTemp(int k, int t) { int lo = k == 0 ? int(TMIN) + 1 : tp[fan][k - 1] + 1, hi = k == 5 ? int(TMAX) - 1 : tp[fan][k + 1] - 1; tp[fan][k] = qBound(lo, t, hi); touched(); }
+    void announce() { QAccessibleEvent ev(this, QAccessible::Focus); ev.setChild(kIdx); QAccessible::updateAccessibility(&ev); update(); }
+    void focusInEvent(QFocusEvent *) override { announce(); }
+    void focusOutEvent(QFocusEvent *) override { update(); }
+    void keyPressEvent(QKeyEvent *e) override {
+        const int big = (e->modifiers() & Qt::ShiftModifier) ? 10 : 1;
+        switch (e->key()) {
+            case Qt::Key_Left: kIdx = qMax(0, kIdx - 1); announce(); return;
+            case Qt::Key_Right: kIdx = qMin(14, kIdx + 1); announce(); return;
+            case Qt::Key_Up: case Qt::Key_Down: { if (!enabled || !ready() || kIdx >= 13) return; const int d = e->key() == Qt::Key_Up ? big : -big; if (kIdx < 7) setSpeed(kIdx, sp[fan][kIdx] + d); else setTemp(kIdx - 7, tp[fan][kIdx - 7] + d);
+                QAccessibleEvent ev(this, QAccessible::ValueChanged); ev.setChild(kIdx); QAccessible::updateAccessibility(&ev); return; }
+            case Qt::Key_Space: case Qt::Key_Return: case Qt::Key_Enter: a11yAct(kIdx); return;
+            default: QWidget::keyPressEvent(e);
+        } }
     QRectF plot, bApply, bReset; int dragKind = -1, dragIdx = -1, hotKind = -1, hotIdx = -1;      // kind 0: speed handle, 1: temperature step
     double X(double t) const { return plot.left() + (t - TMIN) / (TMAX - TMIN) * plot.width(); }
     double Y(double s) const { return plot.bottom() - s / SMAX * plot.height(); }
@@ -198,6 +253,7 @@ protected:
         bReset = QRectF(b.right() - 250, b.bottom() - 34, 110, 32); bApply = QRectF(b.right() - 130, b.bottom() - 34, 130, 32);
         p.setPen(QPen(kLine, 1)); p.setBrush(Qt::NoBrush); p.drawPath(chamfer(bReset, 8)); p.setFont(fnt(RAJ, 16, QFont::Bold, 2)); p.setPen(kText); p.drawText(bReset, Qt::AlignCenter, "RESET");
         p.setPen(QPen(dirty ? gAccent : kLine, 1)); p.setBrush(dirty ? gAccent : QBrush(Qt::NoBrush)); p.drawPath(chamfer(bApply, 8)); p.setPen(dirty ? kBg : alpha(kDim, 0.6)); p.drawText(bApply, Qt::AlignCenter, "APPLY");
+        if (hasFocus() && ready()) { QRectF fr = kIdx < 7 ? QRectF(X((segStart(kIdx) + segEnd(kIdx)) / 2) - 13, Y(sp[fan][kIdx]) - 13, 26, 26) : kIdx < 13 ? QRectF(X(tp[fan][kIdx - 7]) - 11, plot.bottom() - 4, 22, 24) : (kIdx == 13 ? bReset : bApply).adjusted(-3, -3, 3, 3); p.setBrush(Qt::NoBrush); p.setPen(QPen(kText, 1.5, Qt::DashLine)); p.drawRect(fr.adjusted(-2, -2, 2, 2)); }
     }
 };
 

@@ -25,6 +25,7 @@ using namespace kit;
 class ThermalPanel : public Panel {
 public:
     ThermalPanel(QWidget *p) : Panel("", "THERMAL", p) { setMinimumHeight(272); }
+    QString a11yDesc() const override { QString s = QString("CPU %1 degrees Celsius, peak %2.").arg(int(cpu + 0.5)).arg(int(cpuPeak + 0.5)); if (hasGpu) s += gpuOff ? " Graphics card asleep." : QString(" GPU %1 degrees, peak %2.").arg(int(gpu + 0.5)).arg(int(gpuPeak + 0.5)); if (hasNvme) s += QString(" SSD %1 degrees.").arg(nvme); return s; }
     double cpu = 0, gpu = 0, cpuPeak = 0, gpuPeak = 0, cpuS = 0, gpuS = 0; bool hasGpu = false, gpuOff = false, hasNvme = false; int nvme = 0; QString cpuName, gpuName;
     bool step(double dt) { double a = cpuS, b = gpuS; cpuS += (cpu - cpuS) * ease(dt, 0.12); gpuS += (gpu - gpuS) * ease(dt, 0.12); if (fabs(cpu - cpuS) < 0.05) cpuS = cpu; if (fabs(gpu - gpuS) < 0.05) gpuS = gpu; return a != cpuS || b != gpuS; }
 protected:
@@ -80,6 +81,7 @@ protected:
 class FanPanel : public Panel {
 public:
     FanPanel(QWidget *p) : Panel("", "COOLING", p) { setMinimumHeight(272); for (auto &g : gl) g = new FanGlyph(this); }
+    QString a11yDesc() const override { QString s = QString("CPU fan %1 percent, %2 rpm.").arg(qMax(0, pct[0])).arg(rpm[0]); if (two) s += QString(" GPU fan %1 percent, %2 rpm.").arg(qMax(0, pct[1])).arg(rpm[1]); if (boost) s += " Cooler Boost is on."; return s; }
     FanGlyph *gl[2];
     int pct[2] = {-1, -1}, rpm[2] = {0, 0}; double shown[2] = {0, 0}, speed[2] = {0, 0}, rot[2] = {0, 0}, rpmRef[2] = {0, 0}, lastDrawn[2] = {0, 0}; bool two = false, boost = false, boostOk = true;
     std::function<void(bool)> onBoost;
@@ -137,6 +139,7 @@ protected:
 class PowerPanel : public Panel {
 public:
     PowerPanel(QWidget *p) : Panel("", "POWER", p) { setMinimumHeight(272); }
+    QString a11yDesc() const override { return QString("Battery %1 percent, %2, %3. Charge limit %4 percent. %5 %6").arg(cap).arg(state, ac ? "AC connected" : "on battery").arg(limit).arg(draw, eta).trimmed(); }
     int cap = 0, limit = 100; double shown = 0; bool charging = false, limitOk = true; QString state, draw, eta, health, cycles; bool ac = false;
     std::function<void(int)> onLimit;
     bool step(double dt) { double a = shown; shown += (cap - shown) * ease(dt, 0.4); if (fabs(cap - shown) < 0.05) shown = cap; return a != shown; }
@@ -179,6 +182,7 @@ protected:
 class GraphPanel : public Panel {
 public:
     GraphPanel(QWidget *p) : Panel("", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(92); }
+    QString a11yDesc() const override { if (c.empty() || g.empty() || w.empty()) return "Chart of CPU temperature, GPU temperature and battery power over the last three minutes: no data yet."; return QString("Chart of the last three minutes. Latest CPU %1 degrees%2, battery power %3 watts.").arg(int(c.back() + 0.5)).arg(hasGpu && g.back() > 0 ? QString(", GPU %1 degrees").arg(int(g.back() + 0.5)) : QString()).arg(w.back(), 0, 'f', 1); }
     void push(double cpu, double gpu, double watts) { for (auto *d : {&c, &g, &w}) if (d->size() >= N) d->pop_front(); c.push_back(cpu); g.push_back(gpu); w.push_back(watts); }
     bool hasGpu = false;
     QString csv() const { QString o = "seconds_ago,cpu_c,gpu_c,battery_watts\n"; int n = int(c.size()); for (int i = 0; i < n; ++i) o += QString("%1,%2,%3,%4\n").arg(n - 1 - i).arg(c[i] < 0 ? QString() : QString::number(c[i], 'f', 0)).arg(g[i] < 0 ? QString() : QString::number(g[i], 'f', 0)).arg(w[i], 0, 'f', 1); return o; }

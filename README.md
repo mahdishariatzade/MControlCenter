@@ -44,6 +44,7 @@ persists it. The app shows a one-click "Fix it now" banner instead of an error d
 - **Automatic battery calibration with the charger connected**: reproduces what MSI's own tool does (charge to 100 %, simulate an unplug through the firmware's adapter-simulation register, discharge to 20 %, restore) as a root service with safeguards: originals saved first, restored on every exit and at the next boot, 20-minute no-progress watchdog, battery floor. **Verified on the MSI Crosshair 16 HX AI (MS-15P4) only**: on any other board the app asks before using it and offers the guided manual version (no EC write). Needs the `msi-wmi-platform` driver (the kernel's own, or a DKMS copy the installer registers on kernels 6.5+).
 - **Per-app profiles**: pick programs (Settings > Automation > App profiles) and the app switches power mode, Cooler Boost and the laptop screen rate while they run, then puts everything back. **Battery health history** graph with a marker on each calibration, a health-drop alert, a *Reduce motion* switch, and an installer `--dry-run` that lists every system change before making any.
 - **Vendor badges and panel icons** drawn as original neon marks in the app's accent colour (not the companies' official logos; all names are trademarks of their owners).
+- **Keyboard and screen-reader support**: Tab moves between panels, arrow keys move inside them (Space/Enter press, Left/Right change choices and sliders, Shift = bigger steps), a dashed focus ring shows where you are, and Orca/AT-SPI sees switches, buttons, radio buttons and sliders with their names and values. Tested with an automated keyboard/AT-SPI unit test (`tests/a11y-test.cpp`) and an AT-SPI tree dump; not yet used by a real screen-reader user: feedback welcome.
 - Developed on an MSI Crosshair 16 HX AI (MS-15P4, EC 15P4EMS1.105), msi-ec 0.13, Kali + Plasma 6.7. **Other MSI models should work but are untested - please open an issue with your model and what the Dashboard shows.**
 - Bundled fonts: Rajdhani and IBM Plex Mono (SIL OFL, see `resources/fonts`).
 
@@ -89,7 +90,7 @@ MControlCenter is a Free and Open Source GNU/Linux application that allows you t
 ## TODO
 
 - Fan-curve export/import exists (Fans tab, JSON); named profile slots are not done yet
-- AUR package, keyboard/screen-reader labels, MSI monitor vendor features (see the Compatibility table)
+- AUR package (PKGBUILDs written, not yet published), MSI monitor vendor features (see the Compatibility table)
 
 ## Supported devices
 
