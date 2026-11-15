@@ -33,6 +33,10 @@ void Helper::quit() const {
     QTimer::singleShot(0, QCoreApplication::instance(), &QCoreApplication::quit);
 }
 
+bool Helper::isAuthorized() const { return mccauth::authorized(this, true); }
+
+void Helper::requestAuthorization() { mccauth::requestInteractive(this); }
+
 QByteArray Helper::getData() const {
     return rw.readFromFile();
 }

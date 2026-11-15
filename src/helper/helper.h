@@ -40,6 +40,8 @@ signals:
 
 public slots:
     Q_NOREPLY void quit() const;
+    [[nodiscard]] bool isAuthorized() const;      // may this caller change hardware settings right now? (never prompts)
+    void requestAuthorization();                  // same, but lets polkit ask for the administrator password; replies later
     [[nodiscard]] QByteArray getData() const;
     Q_NOREPLY void putValue(const int &address, const int &value) const;
     [[nodiscard]] bool isEcSysModuleLoaded() const;

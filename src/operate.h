@@ -20,6 +20,8 @@
 #define OPERATE_H
 
 
+#include <functional>
+#include <QObject>
 #include <string>
 #include <QVector>
 
@@ -59,6 +61,8 @@ class Operate {
 public:
     Operate();
     void closeHelperApp() const;
+    // asks the root helper whether this session may change hardware ("isAuthorized" never prompts; "requestAuthorization" lets polkit ask for the admin password)
+    void helperAuth(const char *method, QObject *ctx, std::function<void(bool)> done) const;
     [[nodiscard]] bool isEcSysModuleLoaded() const;
     [[nodiscard]] bool isMsiEcLoaded() const;
     [[nodiscard]] bool loadEcSysModule() const;

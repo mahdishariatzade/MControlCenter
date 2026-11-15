@@ -73,6 +73,12 @@ MControlCenter is a Free and Open Source GNU/Linux application that allows you t
 
 
 
+### Requirements and desktop environments
+- **Linux with systemd or elogind, D-Bus, polkit and Qt 6.4+.** The UI is plain Qt Widgets, so it runs on KDE Plasma, GNOME, XFCE, Cinnamon, MATE, LXQt, i3/Sway and others, on X11 and Wayland. Only the Plasma power-slider sync and battery popup are KDE-specific, and both are optional.
+- **System tray:** the app lives in the tray. GNOME needs the AppIndicator extension for the icon; without any tray the window opens normally and closing it quits the app.
+- **Security model:** the root helper changes hardware only for callers polkit trusts (`io.github.dmitry_s93.mcontrolcenter.helper-write`: allowed without a prompt for a local, active login session; an administrator password otherwise). If your session is not recognised (a window manager started by hand with `startx`, no logind/elogind, ssh, a remote desktop), the dashboard shows a banner with an **Authorize** button that makes polkit ask for your password. You need a polkit authentication agent running for that dialog (every full desktop has one; for a bare window manager start e.g. `lxpolkit` or `polkit-gnome-authentication-agent-1`). Refusals are also logged: `journalctl -t mcontrolcenter.helper | grep refused`.
+- Only the author's MSI Crosshair 16 HX AI on Kali + KDE Plasma has been tested end to end. The other distributions are build-tested in CI; reports from other setups are welcome.
+
 ## Features
 
  - CPU and GPU temperature display

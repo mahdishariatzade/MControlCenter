@@ -235,7 +235,7 @@ MainWindow::MainWindow(QWidget *parent)
     buildPages();
     setTabsEnabled(false);
 
-    connect(dashboard, &DashboardPage::fixRequested, this, [this] { if (bannerKind == "restore") restoreCharger(); else runDoctorFix(); });
+    connect(dashboard, &DashboardPage::fixRequested, this, [this] { if (bannerKind == "auth") requestAuth(); else if (bannerKind == "restore") restoreCharger(); else runDoctorFix(); });
     checkDriver();
 
     if (!operate.isEcSysModuleLoaded() && !operate.loadEcSysModule())
@@ -754,7 +754,7 @@ void MainWindow::showEvent(QShowEvent *event) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
-    if (trayIcon && trayIcon->isVisible()) {
+    if (trayIcon && trayIcon->isVisible() && QSystemTrayIcon::isSystemTrayAvailable()) {
         stopRealtimeUpdate();
         if (sensors) QMetaObject::invokeMethod(sensors, "setFast", Qt::QueuedConnection, Q_ARG(bool, false));
         MainWindow::hide();
@@ -1212,9 +1212,30 @@ void MainWindow::probeCaps() {
     syncFanEditor(); refreshFeatures();
 }
 
+// The root helper only changes hardware for callers polkit trusts (a local, active login session). On setups where polkit does not
+// see one (window manager started by hand, no logind/elogind, ssh) the helper would silently ignore every click: say so and offer the password prompt.
+void MainWindow::showAuthBanner() {
+    if (!bannerKind.isEmpty() && bannerKind != "auth") return;
+    bannerKind = "auth";
+    dashboard->setProblem(tr("Changes are blocked: the system helper does not recognise this as a local, active login session (polkit/logind). Press Authorize and enter your administrator password, or see the README section Requirements."), tr("Authorize"));
+}
+void MainWindow::requestAuth() {
+    operate.helperAuth("requestAuthorization", this, [this](bool ok) {
+        if (ok) { if (bannerKind == "auth") { bannerKind.clear(); dashboard->setProblem(QString(), QString()); } }
+        else showAuthBanner();
+    });
+}
+void MainWindow::checkAuth() {
+    operate.helperAuth("isAuthorized", this, [this](bool ok) {
+        if (ok) { if (bannerKind == "auth") { bannerKind.clear(); dashboard->setProblem(QString(), QString()); } return; }
+        if (!authAsked) { authAsked = true; requestAuth(); return; }      // first time: let polkit ask right away
+        showAuthBanner();
+    });
+}
+
 // Friendly replacement for the old "msi-ec not loaded" dialog: say what is wrong and offer the one-click fix.
 void MainWindow::checkDriver() {
-    if (operate.isMsiEcLoaded()) { dashboard->setProblem(QString(), QString()); return; }
+    if (operate.isMsiEcLoaded()) { if (bannerKind != "auth") dashboard->setProblem(QString(), QString()); return; }
     const QString doctor = "/usr/libexec/mcontrolcenter/mcontrolcenter-doctor";
     QString state, fw;
     if (QFile::exists(doctor)) {
@@ -1317,6 +1338,12 @@ void MainWindow::buildPages() {
     syncSettingsPage();
     ui->tabWidget->setCurrentIndex(0);
     if (!qEnvironmentVariableIsSet("MCC_SHOT")) QTimer::singleShot(400, this, [this] { firstRunNotice(); });
+    if (!qEnvironmentVariableIsSet("MCC_SHOT")) {
+        connect(&authTimer, &QTimer::timeout, this, &MainWindow::checkAuth); authTimer.start(30000);
+        QTimer::singleShot(3000, this, &MainWindow::checkAuth);
+        // desktops without a tray (stock GNOME without the AppIndicator extension): there would be no way to open the window, so show it
+        QTimer::singleShot(1500, this, [this] { if (!QSystemTrayIcon::isSystemTrayAvailable()) { show(); raise(); } });
+    }
 
     controlsPage->onSwitch = [this](ControlsPage::Sw s) {
         if (s == ControlsPage::Overdrive) { const bool want = !msiwmi::overdriveOn(); const bool ok = msiwmi::setOverdrive(want); controlsPage->setSwitch(s, msiwmi::overdriveOn());

@@ -21,6 +21,11 @@
 #include <QDateTime>
 #include <atomic>
 #include "helper.h"
+#include "helper/service.h"
+#include <QtDBus/QDBusConnection>
+#include <QtDBus/QDBusMessage>
+#include <QtDBus/QDBusPendingCallWatcher>
+#include <QtDBus/QDBusPendingReply>
 #include "msi-ec_helper.h"
 #include "settings.h"
 
@@ -80,6 +85,18 @@ Operate::Operate() = default;
 
 void Operate::closeHelperApp() const {
     helper.quit();
+}
+
+void Operate::helperAuth(const char *method, QObject *ctx, std::function<void(bool)> done) const {
+    if (!helper.iface) { done(false); return; }
+    const QDBusMessage m = QDBusMessage::createMethodCall(SERVICE_NAME, "/", INTERFACE_NAME, method);
+    auto *w = new QDBusPendingCallWatcher(QDBusConnection::systemBus().asyncCall(m, 130000), ctx);      // long timeout: the password dialog may stay open
+    QObject::connect(w, &QDBusPendingCallWatcher::finished, ctx, [w, done] {
+        QDBusPendingReply<bool> r = *w;
+        // an older helper without these methods has no polkit gate, so nothing can be refused
+        done(r.isError() ? r.error().type() == QDBusError::UnknownMethod : r.value());
+        w->deleteLater();
+    });
 }
 
 bool Operate::isEcSysModuleLoaded() const {
