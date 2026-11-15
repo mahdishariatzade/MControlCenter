@@ -56,7 +56,7 @@ private:
     SensorWorker *sensors = nullptr; QThread sensorThread;
     ControlsPage *controlsPage = nullptr; BatteryPage *batteryPage = nullptr; FanPage *fanPage = nullptr; AboutPage *aboutPage = nullptr; SettingsPage *settingsPage = nullptr;
     Caps lastCaps; QString lastModel, lastGpuState = "none", lastGpuMode = "on"; bool lastGpuSupported = false;
-    QTimer gameTimer; bool gameActive = false; int gameSavedMode = -1; bool gameSavedBoost = false; qint64 hotSince = 0; qint64 lastAlertMs = 0; qint64 lastThrottleMs = 0, lastLimitAlertMs = 0; double peakGhz = 0; int limitSeen = -1;
+    QTimer gameTimer; bool gameActive = false; int gameSavedMode = -1; bool gameSavedBoost = false; qint64 hotSince = 0; qint64 lastAlertMs = 0; qint64 lastThrottleMs = 0, lastLimitAlertMs = 0; double peakGhz = 0; int limitSeen = -1; bool limitWasCal = false;
     void settingChanged(SettingsPage::Item what, int value); void gameModeTick(); void thermalWatch(const Snapshot &s); void limitWatch(const Snapshot &s); void syncSettingsPage();
     AppProfiles *appProfiles = nullptr; bool appActive = false, appHzHold = false; int appSavedMode = -1, appSavedBoost = -1;
     DisplaysPage *displaysPage = nullptr; PanelRefresh *panelRefresh = nullptr; int lastAcState = -1; bool autoRefresh = true;

@@ -1530,6 +1530,7 @@ void MainWindow::limitWatch(const Snapshot &sn) {
     const int lim = sn.d.chargeLimit; if (lim <= 0 || lim > 100) return;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const bool calibrating = exProc || calOrphan || calRunActive();
+    if (calibrating || limitWasCal) { limitWasCal = calibrating; limitSeen = lim; return; }   // calibration and "Restore charger" rewrite the limit themselves: re-baseline when they end
     if (limitSeen > 0 && lim != limitSeen && !calibrating && now - Operate::lastLimitWriteMs() > 15000 && now - lastLimitAlertMs > 600000 && trayIcon) {
         lastLimitAlertMs = now;
         trayIcon->showMessage("MControlCenter", tr("The battery charge limit changed from %1 % to %2 % without this app doing it (firmware, another OS or another tool). Set it again in the Battery tab if you want %1 %.").arg(limitSeen).arg(lim), QSystemTrayIcon::Warning, 12000);
