@@ -30,7 +30,7 @@ private:
     void tick();
     QTimer anim; QElapsedTimer clock;
     QPoint dragFrom; QPoint windowFrom; bool dragging = false, moved = false;
-    Mood mood = Idle; QString detail; double blink = 0, bob = 0, mouth = 0, squashX = 1, squashY = 1;
+    Mood mood = Idle; QString detail; double bob = 0, squashX = 1, squashY = 1;
     QString bubble; double bubbleT = 0;
     double announcedAt[5] = {-1e9, -1e9, -1e9, -1e9, -1e9};   // per-Mood cooldown clock for the automatic "heads up" bubbles; starts far in the past so the first real transition always announces
     void sayTip(); void announceMoodChange(Mood from, Mood to);
