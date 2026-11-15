@@ -1370,6 +1370,10 @@ void MainWindow::syncPages(const Snapshot &s) {
             else if (!s.ac && !exAuto && s.cap > 0 && s.cap < 20) mood = CompanionWidget::Low;
             else if (s.ac || exAuto) mood = CompanionWidget::Happy;
             companion->setMood(mood);
+            static const char *names[] = {"Turbo", "Balanced", "Silent", "Super Battery"};
+            companion->setStats(QString("%1 · CPU %2°C · Fan %3 rpm%4")
+                .arg(dashData.mode >= 0 ? names[dashData.mode] : "?").arg(s.d.cpuTemp).arg(dashData.cpuFanRpm)
+                .arg(s.cap > 0 ? QString(" · Batt %1%2").arg(s.cap).arg(s.ac ? "% (charging)" : "%") : QString()));
         }
     }
     const int m[4] = {0, 1, 2, 3};
@@ -1767,6 +1771,7 @@ void MainWindow::setCompanionVisible(bool on) {
     if (on && !companion) {
         companion = new CompanionWidget(nullptr); companion->placeRemembered();
         companion->onActivate = [this] { show(); raise(); activateWindow(); };
+        companion->onToggleBoost = [this] { setCoolerBoostState(!operate.getCoolerBoostState()); };
     }
     if (companion) companion->setVisible(on);
 }

@@ -17,8 +17,10 @@ public:
     enum Mood { Idle, Happy, Hot, Boosted, Low };
     void setMood(Mood m, const QString &detail = QString());
     void notify(const QString &text, double seconds = 6.0);   // a one-off message pushed in from outside (e.g. a BIOS-update hint), bypassing the mood cooldown
+    void setStats(const QString &line);   // live "72C . 2944rpm . 82%" summary MainWindow keeps current; shown on click instead of a canned tip
     void placeRemembered();         // restores the saved screen position, or a sensible default
-    std::function<void()> onActivate;   // double-click: MainWindow wires this to raise the main window
+    std::function<void()> onActivate;      // double-click, or the menu's "Open MControlCenter": raise the main window
+    std::function<void()> onToggleBoost;   // menu's "Toggle Cooler Boost": a real action, not just decoration
 protected:
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *e) override;
@@ -31,8 +33,8 @@ private:
     QTimer anim; QElapsedTimer clock;
     QPoint dragFrom; QPoint windowFrom; bool dragging = false, moved = false;
     Mood mood = Idle; QString detail; double bob = 0, squashX = 1, squashY = 1;
-    QString bubble; double bubbleT = 0;
+    QString bubble; double bubbleT = 0; QString statsLine;
     double announcedAt[5] = {-1e9, -1e9, -1e9, -1e9, -1e9};   // per-Mood cooldown clock for the automatic "heads up" bubbles; starts far in the past so the first real transition always announces
-    void sayTip(); void announceMoodChange(Mood from, Mood to);
+    void sayTip(); void showStats(); void announceMoodChange(Mood from, Mood to);
 };
 #endif
