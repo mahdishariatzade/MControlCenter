@@ -1,7 +1,8 @@
-// A small, optional, purely-for-fun desktop companion. This is our OWN original drawing (geometric, in the
-// app's neon theme via kit::), NOT MSI's "MSI Companion" mascot art: that is MSI's copyrighted sprite work and
-// this project never copies or redistributes it. Reacts loosely to the laptop's state; never reads or writes
-// anything itself (MainWindow feeds it a mood string). Off by default: it's a toy, not a feature.
+// PLACEHOLDER for a future feature, not a finished one -- ships off by default and is explicitly labeled as such
+// in Settings. This is our OWN original drawing (geometric, in the app's neon theme via kit::), NOT MSI's
+// "MSI Companion" mascot art: that is MSI's copyrighted sprite work and this project never copies or
+// redistributes it. Reacts loosely to the laptop's state; never reads or writes anything itself (MainWindow
+// feeds it a mood string and a live-stats line).
 #ifndef COMPANION_H
 #define COMPANION_H
 #include <QWidget>

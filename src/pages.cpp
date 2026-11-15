@@ -309,7 +309,7 @@ SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
     { Row x; x.type = Row::Text; x.label = "Needs the 'gamemode' package (many launchers use it automatically). Nothing changes until a game actually requests it."; automation->rows.push_back(x); }
     { Row x; x.type = Row::Switch; x.label = "App profiles"; x.sub = "Switch mode and screen rate while chosen apps run"; x.click = [this] { if (onChange) onChange(AppProfiles, automation->rows[2].on ? 0 : 1); }; automation->rows.push_back(x); }
     { Row x; x.type = Row::Button; x.label = "Edit app profiles"; x.click = [this] { if (onChange) onChange(AppProfilesEdit, 0); }; automation->rows.push_back(x); }
-    { Row x; x.type = Row::Switch; x.label = "Desktop companion"; x.sub = "A small floating widget that reacts to your laptop's state. Purely decorative, off by default."; x.click = [this] { if (onChange) onChange(Companion, automation->rows[4].on ? 0 : 1); }; automation->rows.push_back(x); }
+    { Row x; x.type = Row::Switch; x.label = "Desktop companion"; x.sub = "Early placeholder for a future feature: a small floating widget that reacts to your laptop's state. Off by default."; x.click = [this] { if (onChange) onChange(Companion, automation->rows[4].on ? 0 : 1); }; automation->rows.push_back(x); }
     automation->relayout();
     { Row x; x.type = Row::Button; x.label = "Export last 3 min telemetry (CSV)"; x.click = [this] { if (onChange) onChange(ExportCsv, 0); }; data->rows.push_back(x); }
     { Row x; x.type = Row::Text; x.label = "Temperatures, fan and power samples to a CSV file in your home folder: handy for bug reports or comparing modes."; data->rows.push_back(x); }

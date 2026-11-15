@@ -34,7 +34,7 @@ CompanionWidget::CompanionWidget(QWidget *parent) : QWidget(parent) {
     setAttribute(Qt::WA_ShowWithoutActivating);
     setFixedSize(kWidgetW, kSize + kBubbleH);       // wide and tall enough that the bubble is always drawn INSIDE the widget's own rect, never clipped
     setCursor(Qt::OpenHandCursor);
-    setToolTip(tr("MControlCenter's little companion -- purely decorative. Right-click to hide it."));
+    setToolTip(tr("MControlCenter's companion -- early placeholder for a future feature, not finished. Right-click to hide it."));
     clock.start();
     connect(&anim, &QTimer::timeout, this, &CompanionWidget::tick);
     anim.start(1000 / 15);                          // 15 fps is plenty for a small idle sprite and costs very little
