@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 
 ## Unreleased
+- Notifications: CPU throttling alert; alert when the battery charge limit is changed by something other than this app
+
+## [0.6.0] 2026-11-15 (fork, p34t1k/MControlCenter)
+- Redesigned UI (dashboard, Controls, Battery, Fans, Lighting, Displays, Settings), Plasma Power & Battery applet, session D-Bus API
+- Mystic Light keyboard lighting, Displays tab (refresh rate, DDC/CI), discrete-GPU boot mode
+- Battery calibration (guided and automatic with charger connected), health history graph, health-drop alert, interrupted-calibration recovery
+- Per-app profiles, fan-curve export/import, panel overdrive, fan dust check (BIOS-gated), firmware/BIOS card
+- Device discovery (no BAT1/ADP1 assumptions), msi-ec doctor, installer with --dry-run, .deb/.rpm packages, CI on 5 distros
+- Optional desktop companion widget (early placeholder)
 
 ## [0.4.1] 2023-08-09
 - Fixed UI lags when resizing the window (issue https://github.com/dmitry-s93/MControlCenter/issues/97)

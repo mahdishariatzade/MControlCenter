@@ -34,7 +34,7 @@ persists it. The app shows a one-click "Fix it now" banner instead of an error d
 - **Every page redesigned** in the same language: Controls (switches, auto-profile, GPU boot mode), Battery (draggable charge limit), Fans (drag-to-edit stepped fan curve with a live "now" marker), About.
 - **Keyboard lighting (Mystic Light)**: 24-zone per-key-row editor, HSV picker, hardware effects (breathing / cycle / wave), presets, brightness, and *follow the laptop* (colour by power mode, red flash on overheat, pulse on low battery, off while locked). Works on MSI laptops whose keyboard shows up as USB `1462:16xx` MysticLight; confirmed on the 24-zone `1462:1603`. Never writes the controller's flash. Scriptable: `SetKeyboardColor`, `KeyboardOff`, `KeyboardRestore` on the D-Bus API.
 - **Battery calibration, following MSI's own guidance** (msi.com support: *Laptop Battery*, *Perform Battery Calibration*): it learns how you really use the laptop (plugged in vs on battery) and applies MSI's rules without asking: calibrate **every 3 months if you are mostly plugged in, monthly if you use the battery a lot**; calibration starts by charging to 100 % (MSI: select Best for Mobility first), then one real discharge, then your normal limit is restored automatically. The charge-limit presets use MSI's names (Best for Battery 60 %, Balanced 80 %, Best for Mobility 100 %) and the one matching your usage is tagged *MSI recommends*. MSI's tool discharges under its own control with the charger connected; this hardware has no way to do that, so the discharge step is guided (you unplug and later plug in; the app tells you when).
-- **Settings page**: start with your session, CPU thermal alerts (85/90/95 °C for 10 s), **auto Turbo + Cooler Boost while a game runs** (Feral GameMode, restores your previous mode afterwards), telemetry export to CSV. Launching the app again raises the window.
+- **Settings page**: start with your session, CPU thermal alerts (85/90/95 °C for 10 s) plus a throttling alert (very hot and the clock well below its peak) and a notice when something else changes your charge limit, **auto Turbo + Cooler Boost while a game runs** (Feral GameMode, restores your previous mode afterwards), telemetry export to CSV. Launching the app again raises the window.
 - **Desktop companion** (Settings > Automation, off by default): an early placeholder for a future feature, not a finished one yet - a small draggable widget that reacts to CPU temperature, Cooler Boost and charging state, with a click-for-live-stats bubble and a right-click menu (toggle Cooler Boost, open the app). Original art, no network access.
 - **Report my laptop in one click**: About → *Report a problem / add my laptop* opens a Hardware-report issue with your report already filled in.
 - **Discrete GPU boot mode** (NVIDIA hybrid laptops): keeps the dGPU driverless so it sleeps in D3cold (best battery, quietest fans), applied at next boot and reversible; shown only where it is safe. Not a hardware MUX (that is a BIOS setting).
@@ -88,7 +88,8 @@ MControlCenter is a Free and Open Source GNU/Linux application that allows you t
 
 ## TODO
 
-- Saving multiple fan speed profiles
+- Fan-curve export/import exists (Fans tab, JSON); named profile slots are not done yet
+- AUR package, keyboard/screen-reader labels, MSI monitor vendor features (see the Compatibility table)
 
 ## Supported devices
 

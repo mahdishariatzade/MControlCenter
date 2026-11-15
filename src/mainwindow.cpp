@@ -1504,11 +1504,37 @@ void MainWindow::settingChanged(SettingsPage::Item what, int value) {
 
 // Alert once (then at most every 5 minutes) when the CPU has stayed above the chosen temperature for 10 s.
 void MainWindow::thermalWatch(const Snapshot &sn) {
+    limitWatch(sn);
     Settings s; if (!s.getValue("Settings/thermalAlert").toBool() || !sn.msiEc) { hotSince = 0; return; }
+    // throttling: very hot AND the average CPU clock well below the best seen this session (at most one alert per 10 minutes)
+    if (sn.ghz > peakGhz) peakGhz = sn.ghz;
+    if (sn.d.cpuTemp >= 92 && peakGhz > 1.0 && sn.ghz > 0 && sn.ghz < 0.65 * peakGhz && trayIcon && QDateTime::currentMSecsSinceEpoch() - lastThrottleMs > 600000) {
+        lastThrottleMs = QDateTime::currentMSecsSinceEpoch();
+        trayIcon->showMessage("MControlCenter", tr("The CPU looks thermally throttled: %1 °C and the clock fell to %2 GHz (peak %3 GHz). Cooler Boost, a cooler spot or a lighter load would help.").arg(sn.d.cpuTemp).arg(sn.ghz, 0, 'f', 1).arg(peakGhz, 0, 'f', 1), QSystemTrayIcon::Warning, 10000);
+    }
     const int level = kThermalLevels[qBound(0, s.getValue("Settings/thermalLevel").toInt(), 2)]; const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (sn.d.cpuTemp < level) { hotSince = 0; return; }
     if (!hotSince) hotSince = now;
     if (now - hotSince >= 10000 && now - lastAlertMs > 300000 && trayIcon) { lastAlertMs = now; if (rgbFlashThermal && rgbPresent) QMetaObject::invokeMethod(rgb, "flash", Qt::QueuedConnection, Q_ARG(QColor, QColor(255, 0, 0)), Q_ARG(int, 3), Q_ARG(RgbProfile, rgbEffective())); trayIcon->showMessage("MControlCenter", tr("CPU has been at %1 °C for 10 seconds. Cooler Boost or a quieter workload would help.").arg(sn.d.cpuTemp), QSystemTrayIcon::Warning, 8000); }
+}
+
+// True while the calibration service is running, and for a minute after its last status write (it restores the charge limit at the end).
+static bool calRunActive() {
+    QFile f("/run/mcontrolcenter/calibration"); if (!f.open(QIODevice::ReadOnly)) return false;
+    for (const QByteArray &ln : f.readAll().split('\n')) if (ln.startsWith("ts=")) return QDateTime::currentSecsSinceEpoch() - ln.mid(3).toLongLong() < 60;
+    return false;
+}
+
+// Tell the user when something other than this app changed the charge limit (firmware reset, Windows, another tool).
+void MainWindow::limitWatch(const Snapshot &sn) {
+    const int lim = sn.d.chargeLimit; if (lim <= 0 || lim > 100) return;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const bool calibrating = exProc || calOrphan || calRunActive();
+    if (limitSeen > 0 && lim != limitSeen && !calibrating && now - Operate::lastLimitWriteMs() > 15000 && now - lastLimitAlertMs > 600000 && trayIcon) {
+        lastLimitAlertMs = now;
+        trayIcon->showMessage("MControlCenter", tr("The battery charge limit changed from %1 % to %2 % without this app doing it (firmware, another OS or another tool). Set it again in the Battery tab if you want %1 %.").arg(limitSeen).arg(lim), QSystemTrayIcon::Warning, 12000);
+    }
+    limitSeen = lim;
 }
 
 // Feral GameMode integration: Turbo + Cooler Boost while any game holds a GameMode request, then restore exactly what the user had.

@@ -18,6 +18,8 @@
 
 #include "operate.h"
 #include <QFile>
+#include <QDateTime>
+#include <atomic>
 #include "helper.h"
 #include "msi-ec_helper.h"
 #include "settings.h"
@@ -319,7 +321,11 @@ fan_mode Operate::getFanMode() const {
     }
 }
 
+static std::atomic<qint64> g_limitWriteMs{0};
+qint64 Operate::lastLimitWriteMs() { return g_limitWriteMs.load(); }
+
 void Operate::setBatteryThreshold(int value) const {
+    g_limitWriteMs = QDateTime::currentMSecsSinceEpoch();
     if (msiEcHelper.hasBatteryEndThreshold())
         return msiEcHelper.setBatteryEndThreshold(value);
     if (value != getBatteryThreshold())

@@ -89,6 +89,7 @@ public:
     [[nodiscard]] fan_mode getFanMode() const;
 
     void setBatteryThreshold(int value) const;
+    static qint64 lastLimitWriteMs();      // when this app last wrote the charge limit (to tell its own changes from external ones)
     void setKeyboardBacklightMode(int value) const;
     void setKeyboardBrightness(int value) const;
     void setUsbPowerShareState(bool enabled) const;
