@@ -113,7 +113,7 @@ protected:
 class TileStrip : public QWidget, public A11yHost {
 public:
     struct Item { QString label, sub; QColor accent; bool enabled = true; bool visible = true; };
-    TileStrip(bool checkable, QWidget *p) : QWidget(p), checkable(checkable) { setMouseTracking(true); setFixedHeight(checkable ? 58 : 46); setFocusPolicy(Qt::StrongFocus); }
+    TileStrip(bool checkable, QWidget *p) : QWidget(p), checkable(checkable) { setMouseTracking(true); setFixedHeight(checkable ? 58 : 46); setFocusPolicy(Qt::TabFocus); }
     // keyboard: Left/Right move between tiles, Space/Enter choose; screen readers see one button / radio button per tile
     QString a11yName() const override { return controls ? (checkable ? "Modes" : "Quick setups") : "Status"; }
     std::vector<A11yEntry> a11yEntries() const override {
@@ -198,7 +198,7 @@ struct Row {
 
 class RowsPanel : public Panel {
 public:
-    RowsPanel(const QString &idx, const QString &title, QWidget *p) : Panel(idx, title, p) { setMouseTracking(true); setFocusPolicy(Qt::StrongFocus); }
+    RowsPanel(const QString &idx, const QString &title, QWidget *p) : Panel(idx, title, p) { setMouseTracking(true); setFocusPolicy(Qt::TabFocus); }
     std::vector<Row> rows;
     // ── keyboard + screen reader support ──
     // Up/Down move between controls, Left/Right change a choice or nudge a slider, Space/Enter press a button or flip a switch.

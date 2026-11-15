@@ -190,7 +190,7 @@ MainWindow::MainWindow(QWidget *parent)
     dashboard = new DashboardPage(this);
     dashboard->setMinimumSize(980, 700);
     ui->tabWidget->insertTab(0, dashboard, tr("Dashboard"));
-    ui->tabWidget->tabBar()->setFocusPolicy(Qt::StrongFocus);      // keyboard users switch pages with Left/Right on the tab bar
+    ui->tabWidget->tabBar()->setFocusPolicy(Qt::TabFocus);      // keyboard users switch pages with Left/Right on the tab bar
     ui->tabWidget->tabBar()->setAccessibleName(tr("Pages"));
     ui->tabWidget->setTabText(1, tr("Controls"));
     for (int i = 0; i < ui->tabWidget->count(); ++i) ui->tabWidget->setTabIcon(i, QIcon());

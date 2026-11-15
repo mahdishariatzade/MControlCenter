@@ -29,7 +29,7 @@ static std::vector<QString> modeNames() { return {"Turbo", "Balanced", "Silent",
 // ───────────────────────────── charge limit ─────────────────────────────
 class ChargePanel : public Panel {
 public:
-    ChargePanel(QWidget *p) : Panel("", "CHARGE LIMIT", p) { setMinimumHeight(300); setFocusPolicy(Qt::StrongFocus); }
+    ChargePanel(QWidget *p) : Panel("", "CHARGE LIMIT", p) { setMinimumHeight(300); setFocusPolicy(Qt::TabFocus); }
     // accessibility: the limit is a slider (Left/Right 5 %, Home 60 %, End 100 %) and the three MSI presets are buttons
     QString a11yDesc() const override { return supported ? QString("Battery charge limit %1 percent. Left and Right change it by 5, Home sets 60, End sets 100.").arg(limit) : QString("Not available on this laptop."); }
     std::vector<A11yEntry> a11yEntries() const override {
@@ -42,7 +42,8 @@ public:
     void a11ySet(int n, int v) override { if (supported && n == 0) { limit = qBound(30, int(round(v / 5.0)) * 5, 100); update(); if (onCommit) onCommit(limit); } }
     int a11yFocusEntry() const override { return hasFocus() ? 0 : -1; }
     int limit = 100, drag = -1, recommended = 0; bool supported = true; std::function<void(int)> onCommit;
-    void setValue(int v) { if (drag < 0) limit = v; }
+    qint64 holdUntil = 0;   // a keyboard change is waiting to be committed: do not let the 1 s sensor sync overwrite it
+    void setValue(int v) { if (drag < 0 && QDateTime::currentMSecsSinceEpoch() > holdUntil) limit = v; }
 protected:
     QRectF track; QRectF chips[3]; int keyTok = 0;
     void focusInEvent(QFocusEvent *) override { if (!supported) { focusNextChild(); return; } QAccessibleEvent ev(this, QAccessible::Focus); ev.setChild(0); QAccessible::updateAccessibility(&ev); update(); }
@@ -51,8 +52,8 @@ protected:
         if (!supported) { QWidget::keyPressEvent(e); return; }
         int v = limit;
         switch (e->key()) { case Qt::Key_Left: case Qt::Key_Down: v -= 5; break; case Qt::Key_Right: case Qt::Key_Up: v += 5; break; case Qt::Key_Home: v = 60; break; case Qt::Key_End: v = 100; break; default: QWidget::keyPressEvent(e); return; }
-        v = qBound(30, v, 100); if (v == limit) return; limit = v; update(); int tok = ++keyTok;                     // commit once the key stops repeating (each commit is an EC write)
-        QTimer::singleShot(600, this, [this, tok] { if (tok == keyTok && onCommit) onCommit(limit); }); QAccessibleEvent ev(this, QAccessible::ValueChanged); QAccessible::updateAccessibility(&ev);
+        v = qBound(30, v, 100); if (v == limit) return; limit = v; holdUntil = QDateTime::currentMSecsSinceEpoch() + 3000; update(); int tok = ++keyTok;                     // commit once the key stops repeating (each commit is an EC write)
+        QTimer::singleShot(600, this, [this, tok] { if (tok == keyTok && onCommit) { onCommit(limit); holdUntil = QDateTime::currentMSecsSinceEpoch() + 2500; } }); QAccessibleEvent ev(this, QAccessible::ValueChanged); QAccessible::updateAccessibility(&ev);
     }
     int valueAt(double x) const { double f = qBound(0.0, (x - track.left()) / track.width(), 1.0); return qBound(30, int(round((30 + f * 70) / 5.0) * 5), 100); }
     void mousePressEvent(QMouseEvent *e) override {
@@ -162,7 +163,7 @@ void BatteryPage::setHealth(const QString &status, const QString &health, const 
 // ───────────────────────────── fan curve editor ─────────────────────────────
 class CurvePanel : public Panel {
 public:
-    CurvePanel(QWidget *p) : Panel("", "FAN CURVE", p) { setMinimumHeight(330); setFocusPolicy(Qt::StrongFocus); }
+    CurvePanel(QWidget *p) : Panel("", "FAN CURVE", p) { setMinimumHeight(330); setFocusPolicy(Qt::TabFocus); }
     // keyboard: Left/Right pick a speed step, a temperature step, Reset or Apply; Up/Down change the value (Shift = 10); Enter presses a button.
     // screen readers get 7 speed sliders, 6 temperature sliders and the two buttons.
     QString a11yDesc() const override { return enabled ? QString("Fan curve editor for the %1 fan. Left and Right choose a point, Up and Down change it.").arg(fan ? "GPU" : "CPU") : QString("Showing the current fan table. Turn on advanced fan control to edit it."); }
