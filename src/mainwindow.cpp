@@ -1730,6 +1730,7 @@ void MainWindow::refreshFeatures() {
         const BiosHint h = biosCheck->forBoard(lastCaps.board, rawBios);
         if (h.newer) biosHintLine = tr("A newer BIOS is listed for this board: %1 (%2). Community-reported, not an official MSI check — verify on MSI's support page before updating. %3").arg(h.latest, h.date, h.note);
         else if (h.known) biosHintLine = tr("Your BIOS matches the newest version this community list knows about for this board (last checked by a contributor: %1).").arg(h.source);
+        if (h.newer && companion && !companionNotifiedBios) { companionNotifiedBios = true; companion->notify(tr("Heads up: a newer BIOS (%1) is listed for your board. Check Settings for details.").arg(h.latest), 8.0); }
     }
     controlsPage->setFeatures(lines, bios, fanCheckResult, fanCheckBusy, biosHintLine, ageHint);
 }
@@ -1763,6 +1764,9 @@ void MainWindow::firstRunNotice() {
 }
 
 void MainWindow::setCompanionVisible(bool on) {
-    if (on && !companion) { companion = new CompanionWidget(nullptr); companion->placeRemembered(); }
+    if (on && !companion) {
+        companion = new CompanionWidget(nullptr); companion->placeRemembered();
+        companion->onActivate = [this] { show(); raise(); activateWindow(); };
+    }
     if (companion) companion->setVisible(on);
 }
