@@ -31,16 +31,19 @@ private:
 class ControlsPage : public AnimPage {
 public:
     explicit ControlsPage(QWidget *p);
-    enum Sw { Webcam, FnSwap, UsbShare, Boost };
+    enum Sw { Webcam, FnSwap, UsbShare, Boost, Overdrive };
     void setCaps(const Caps &c);
     void setSwitch(Sw s, bool on);
     void setProfileState(bool followPpd, bool autoAcDc, int onCharger, int onBattery);
     void setGpu(bool known, bool supported, const QString &reason, const QString &driver, const QString &power, const QString &mode, qint64 active, qint64 suspended);
     void setGpuBusy(const QString &msg);
+    struct FeatureLine { QString name, status, note; bool needsBios = false, usable = false; };
+    void setFeatures(const QVector<FeatureLine> &f, const QString &bios, const QString &fanResult, bool fanBusy);
+    std::function<void()> onFanCheck, onBiosHelp;
     std::function<void(Sw)> onSwitch; std::function<void(bool)> onFollowPpd, onAutoAcDc; std::function<void(bool, int)> onAcDcMode;
     std::function<void(bool)> onGpuMode; std::function<void()> onReboot;
 private:
-    kit::RowsPanel *profile, *hardware, *gpu; Caps caps; bool gpuHaveInfo = false, gpuSupported = false, gpuModeOn = true, gpuRunningOff = false; QString gpuBusy; bool gpuPending = false;
+    kit::RowsPanel *profile, *hardware, *gpu, *features; Caps caps; bool gpuHaveInfo = false, gpuSupported = false, gpuModeOn = true, gpuRunningOff = false; QString gpuBusy; bool gpuPending = false;
     void rebuildGpuRows(const QString &reason, const QString &driver, const QString &power, qint64 a, qint64 s);
     QString gReason, gDriver, gPower; qint64 gA = 0, gS = 0;
 };

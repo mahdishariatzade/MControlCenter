@@ -223,19 +223,19 @@ void FanPage::setDirty(bool d) { curve->dirty = d; curve->update(); }
 ControlsPage::ControlsPage(QWidget *p) : AnimPage(p) {
     auto *root = new QHBoxLayout(this); root->setContentsMargins(18, 16, 18, 16); root->setSpacing(10);
     auto *left = new QVBoxLayout; left->setSpacing(10); auto *right = new QVBoxLayout; right->setSpacing(10);
-    profile = new RowsPanel("", "POWER PROFILE", this); hardware = new RowsPanel("", "HARDWARE SWITCHES", this); gpu = new RowsPanel("", "DISCRETE GPU", this);
-    left->addWidget(profile); left->addWidget(hardware); left->addStretch(1); right->addWidget(gpu); right->addStretch(1);
-    root->addLayout(left, 1); root->addLayout(right, 1); adopt(profile, 0.0); adopt(hardware, 0.1); adopt(gpu, 0.2);
+    profile = new RowsPanel("", "POWER PROFILE", this); hardware = new RowsPanel("", "HARDWARE SWITCHES", this); gpu = new RowsPanel("", "DISCRETE GPU", this); features = new RowsPanel("", "MSI FIRMWARE FEATURES", this);
+    left->addWidget(profile); left->addWidget(hardware); left->addStretch(1); right->addWidget(gpu); right->addWidget(features); right->addStretch(1); features->hide();
+    root->addLayout(left, 1); root->addLayout(right, 1); adopt(profile, 0.0); adopt(hardware, 0.1); adopt(gpu, 0.2); adopt(features, 0.3);
     { Row r; r.type = Row::Switch; r.label = "Follow system power profile"; r.sub = "Sync with the desktop power slider (KDE / GNOME)"; r.click = [this] { if (onFollowPpd) onFollowPpd(!profile->rows[0].on); }; profile->rows.push_back(r); }
     { Row r; r.type = Row::Switch; r.label = "Auto-switch on AC / battery"; r.sub = "A different mode for each power source"; r.click = [this] { if (onAutoAcDc) onAutoAcDc(!profile->rows[1].on); }; profile->rows.push_back(r); }
     for (int k = 0; k < 2; ++k) { Row r; r.type = Row::Segment; r.label = k == 0 ? "On charger" : "On battery"; r.opts = modeNames(); r.visible = false; r.pick = [this, k](int i) { if (onAcDcMode) onAcDcMode(k == 0, i); }; profile->rows.push_back(r); }
     { Row r; r.type = Row::Text; r.label = "Switch modes any time on the Dashboard. These options only decide what happens automatically."; profile->rows.push_back(r); }
     profile->relayout();
-    const char *lab[4] = {"Webcam", "Swap Fn and Win keys", "USB power share", "Cooler Boost"}, *sub[4] = {"Hardware switch: off disconnects the camera", "Exchange the physical key positions", "Keep USB ports powered when the laptop is off", "Run all fans at maximum speed"};
-    for (int i = 0; i < 4; ++i) { Row r; r.type = Row::Switch; r.label = lab[i]; r.sub = sub[i]; r.click = [this, i] { if (onSwitch) onSwitch(Sw(i)); }; hardware->rows.push_back(r); }
+    const char *lab[5] = {"Webcam", "Swap Fn and Win keys", "USB power share", "Cooler Boost", "Panel overdrive"}, *sub[5] = {"Hardware switch: off disconnects the camera", "Exchange the physical key positions", "Keep USB ports powered when the laptop is off", "Run all fans at maximum speed", "Faster pixel response on the built-in screen (can look slightly sharper or smeary in dark scenes)"};
+    for (int i = 0; i < 5; ++i) { Row r; r.type = Row::Switch; r.label = lab[i]; r.sub = sub[i]; r.click = [this, i] { if (onSwitch) onSwitch(Sw(i)); }; hardware->rows.push_back(r); }
     hardware->relayout(); rebuildGpuRows(QString(), QString(), QString(), 0, 0);
 }
-void ControlsPage::setCaps(const Caps &c) { caps = c; hardware->rows[Webcam].visible = c.webcam; hardware->rows[FnSwap].visible = c.fnSwap; hardware->rows[UsbShare].visible = c.usbShare; hardware->rows[Boost].visible = c.coolerBoost; hardware->relayout(); }
+void ControlsPage::setCaps(const Caps &c) { caps = c; hardware->rows[Webcam].visible = c.webcam; hardware->rows[FnSwap].visible = c.fnSwap; hardware->rows[UsbShare].visible = c.usbShare; hardware->rows[Boost].visible = c.coolerBoost; hardware->rows[Overdrive].visible = c.overdrive; hardware->relayout(); }
 void ControlsPage::setSwitch(Sw s, bool on) { if (hardware->rows[s].on != on) { hardware->rows[s].on = on; kick(); } }
 void ControlsPage::setProfileState(bool f, bool a, int c, int b) {
     bool ch = profile->rows[0].on != f || profile->rows[1].on != a || profile->rows[2].sel != c || profile->rows[3].sel != b || profile->rows[2].visible != a;
@@ -323,3 +323,19 @@ void SettingsPage::setState(bool a, bool t, int ti, bool g, bool avail) {
     if (ch) { startup->relayout(); automation->relayout(); kick(); }
 }
 
+
+// Which MSI firmware features this laptop has, and which ones a newer BIOS could add (MSI's own app has the same BIOS gates).
+void ControlsPage::setFeatures(const QVector<FeatureLine> &f, const QString &bios, const QString &fanResult, bool fanBusy) {
+    features->rows.clear();
+    if (f.isEmpty()) { features->hide(); return; }
+    features->show();
+    for (const FeatureLine &l : f) { Row r; r.type = Row::Info; r.label = l.name; r.value = l.status; r.accent = l.needsBios; features->rows.push_back(r); if (!l.note.isEmpty()) { Row t; t.type = Row::Text; t.label = l.note; features->rows.push_back(t); } }
+    bool anyBios = false, fan = false; for (const FeatureLine &l : f) { anyBios |= l.needsBios; fan |= (l.name == "Fan dust check" && l.usable); }
+    if (fan) { Row b; b.type = Row::Button; b.label = fanBusy ? "Checking the fans..." : "Run fan dust check"; b.enabled = !fanBusy; b.accent = true; b.click = [this] { if (onFanCheck) onFanCheck(); }; features->rows.push_back(b); }
+    if (!fanResult.isEmpty()) { Row t; t.type = Row::Text; t.label = fanResult; t.accent = true; features->rows.push_back(t); }
+    if (anyBios) {
+        Row t; t.type = Row::Text; t.label = QString("Your BIOS is %1. MSI's own app only enables the features marked above on a newer BIOS, so updating it may unlock them. Check MSI's support page for your exact model: a BIOS update is your own decision and carries its own risk (a failed flash can make a laptop unbootable), so follow MSI's instructions and keep the charger connected.").arg(bios); features->rows.push_back(t);
+        Row b; b.type = Row::Button; b.label = "Open MSI's support page"; b.click = [this] { if (onBiosHelp) onBiosHelp(); }; features->rows.push_back(b);
+    }
+    features->relayout(); kick();
+}

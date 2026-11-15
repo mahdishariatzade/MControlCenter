@@ -18,6 +18,7 @@ add_executable(mcontrolcenter-helper
   helper.cpp
   readwrite.h
   readwrite.cpp
+  wmi.cpp
   msi-ec.h
   msi-ec.cpp
 )

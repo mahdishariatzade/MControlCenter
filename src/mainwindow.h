@@ -66,6 +66,8 @@ private:
     RgbProfile rgbUser; bool rgbChosen = false, rgbFollowMode = false, rgbFlashThermal = false, rgbPulseLow = false, rgbOffOnLock = false, rgbLocked = false, rgbLowBat = false, rgbPresent = false; int rgbLastMode = -2;
     RgbProfile rgbEffective() const; void rgbPush(); void rgbSave(); void rgbLoad(); void rgbReset(); void onScreenLocked(bool locked);
     // battery exercise (guided real discharge cycle; this laptop cannot discharge on AC)
+    QTimer fanCheckTimer; QString fanCheckResult; bool fanCheckBusy = false; int fanCheckTicks = 0;
+    void firstRunNotice(); void refreshFeatures(); void runFanCheck(); void fanCheckPoll();
     bool exEnabled = true, exWarnedNear = false, exWarnedLow = false; int exStage = 0, exOrigLimit = 60, exLow = 100; qint64 exLast = 0, exSince = 0, exStageAt = 0, exLowAt = 0, exLastNotify = 0, exLastTick = 0, exLastSave = 0; double exAcSec = 0, exBatSec = 0; bool exAuto = false; QString exAutoMsg, exAutoEta; QVector<HistPoint> histPts; QVector<HistEvent> histEv; QString histNote; QDate histLast; bool histLoaded = false; void historyLoad(); void historyAppend(const QString &row); bool calOrphan = false; QString bannerKind; void restoreCharger(); QProcess *exProc = nullptr; qint64 exProcAt = 0;
     double acShare() const; int calIntervalDays() const; int recommendedLimit() const;
     void exerciseLoad(); void exerciseSave(); void batteryExercise(const Snapshot &s); void exerciseAction(int what, int value); ExerciseView exerciseView() const;

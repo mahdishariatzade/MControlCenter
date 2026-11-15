@@ -26,7 +26,7 @@ struct Caps {
     bool coolerBoost = true;
     bool chargeLimit = true;
     bool modeOk[4] = {true, true, true, true};   // turbo, balanced, silent, eco
-    bool webcam = true, fnSwap = true, usbShare = false;   // optional hardware switches
+    bool webcam = true, fnSwap = true, usbShare = false, overdrive = false;   // optional hardware switches
     QString model, board, fw, cpuName, gpuName;
 };
 
@@ -69,7 +69,7 @@ private:
     void applyPreset(int idx);
     void retargetAccent();
 
-    HeaderBar *header; BannerBar *banner;
+    HeaderBar *header; BannerBar *banner; class DisclaimerBar *disclaimer;
     ThermalPanel *thermal; FanPanel *fans; PowerPanel *power; GraphPanel *graph;
     TileStrip *modes, *presets; SectionLabel *modeLabel, *presetLabel;
     QTimer fastTimer; double slowAcc = 0;

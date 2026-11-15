@@ -1,6 +1,9 @@
 
 ##  Open-source control centre for MSI laptops 
 
+> **⚠️ Unofficial and still in testing. Use at your own risk.**
+> This is a community project. It is **not made, endorsed or supported by MSI**. It changes real hardware settings (fans, charge limit, battery calibration, keyboard lighting, panel options) through the embedded controller and firmware interfaces. It is provided **"as is", without warranty of any kind** (GPL-3.0, sections 15-16). The authors and contributors are **not responsible** for damage, data loss, instability or warranty problems. Features marked *untested* have not been verified on every model. If you are unsure about a feature, leave it alone. The app also shows this notice on first start.
+
 Goal: **work on every MSI laptop that msi-ec supports** (gaming series mostly). **KDE Plasma is the primary desktop**; GNOME, XFCE and others work through the plain Qt tray app and the session D-Bus API (a GNOME Shell integration is welcome - see CONTRIBUTING.md). Light on resources: ~0 CPU in the tray, a few % of one core while the window is open.
 
 **Your laptop not listed or something looks off?** Run `/usr/libexec/mcontrolcenter/mcontrolcenter-doctor report` and open a *Hardware report* issue
@@ -249,3 +252,7 @@ You can help translate the MControlCenter app into your native language
 3. Translate strings into your language directly in a text editor or use the QT Linguist app or Lokalize.
 4. Translate `GenericName` in app shortcut `resources/mcontrolcenter.desktop`. To do this, add the line `GenericName[xx]=translated generic name`.
 5. Open a pull request on github with a screenshot of the UI using the new language.
+
+## BIOS and firmware features
+
+Some MSI firmware features only work on newer BIOS versions (MSI's own Windows app has the same gates). The Controls page lists them: if your laptop has a feature that needs a newer BIOS, it shows "needs BIOS x.112 or newer" and links to MSI's support page. Updating a BIOS is your own decision and carries its own risk; follow MSI's instructions and keep the charger connected.

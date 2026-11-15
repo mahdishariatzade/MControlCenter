@@ -30,6 +30,7 @@ set(PROJECT_SOURCES
     src/operate.cpp src/operate.h
     src/powermonitor.cpp src/powermonitor.h
     src/helper.cpp src/helper.h
+    src/msiwmi.cpp src/msiwmi.h
     src/msi-ec_helper.cpp src/msi-ec_helper.h
     src/settings.cpp src/settings.h
     src/dashboard.cpp src/dashboard.h src/theme.h

@@ -17,6 +17,8 @@
  */
 
 #include "mainwindow.h"
+#include "msiwmi.h"
+#include <QDesktopServices>
 #include "./ui_mainwindow.h"
 #include "operate.h"
 #include "settings.h"
@@ -1198,12 +1200,13 @@ void MainWindow::probeCaps() {
     c.webcam = msiEcPresent() ? QFile::exists("/sys/devices/platform/msi-ec/webcam") : operate.isWebCamOffSupport();
     c.fnSwap = msiEcPresent() ? QFile::exists("/sys/devices/platform/msi-ec/fn_key") : true;
     c.usbShare = QFile::exists("/sys/devices/platform/msi-ec/usb_share") || operate.isUsbPowerShareSupport();
+    c.overdrive = msiwmi::overdriveSupported();
     lastCaps = c; lastModel = c.model;
     dashboard->setCaps(c); controlsPage->setCaps(c); fanPage->setCaps(c);
     aboutPage->setInfo(MControlCenter_VERSION, QT_VERSION_STR, QString("%1 · %2").arg(c.fw, QString::fromStdString(operate.getEcBuild())),
                        msiEcPresent() ? QString("msi-ec %1").arg(slurp("/sys/module/msi_ec/version").isEmpty() ? QString("(DKMS)") : slurp("/sys/module/msi_ec/version")) : QString("not loaded (ec_sys fallback)"),
                        QSysInfo::kernelVersion(), QString("%1 · %2").arg(qEnvironmentVariable("XDG_CURRENT_DESKTOP", "unknown"), qEnvironmentVariable("XDG_SESSION_TYPE", "unknown")));
-    syncFanEditor();
+    syncFanEditor(); refreshFeatures();
 }
 
 // Friendly replacement for the old "msi-ec not loaded" dialog: say what is wrong and offer the one-click fix.
@@ -1310,10 +1313,16 @@ void MainWindow::buildPages() {
     if (Settings().getValue("Settings/gameMode").toBool()) gameTimer.start();
     syncSettingsPage();
     ui->tabWidget->setCurrentIndex(0);
+    if (!qEnvironmentVariableIsSet("MCC_SHOT")) QTimer::singleShot(400, this, [this] { firstRunNotice(); });
 
     controlsPage->onSwitch = [this](ControlsPage::Sw s) {
+        if (s == ControlsPage::Overdrive) { const bool want = !msiwmi::overdriveOn(); const bool ok = msiwmi::setOverdrive(want); controlsPage->setSwitch(s, msiwmi::overdriveOn());
+            if (!ok && trayIcon) trayIcon->showMessage("MControlCenter", tr("Could not change the panel overdrive: the firmware did not accept it."), QSystemTrayIcon::Warning, 6000); return; }
         QCheckBox *c = s == ControlsPage::Webcam ? ui->webCamCheckBox : s == ControlsPage::FnSwap ? ui->fnSuperSwapCheckBox : s == ControlsPage::UsbShare ? ui->usbPowerShareCheckBox : ui->coolerBoostCheckBox;
         if (c->isEnabled()) { c->click(); controlsPage->setSwitch(s, c->isChecked()); } };
+    controlsPage->onFanCheck = [this] { runFanCheck(); }; controlsPage->onBiosHelp = [] { QDesktopServices::openUrl(QUrl(msiwmi::supportUrl())); };
+    connect(&fanCheckTimer, &QTimer::timeout, this, &MainWindow::fanCheckPoll); fanCheckTimer.setInterval(3000);
+    controlsPage->setSwitch(ControlsPage::Overdrive, msiwmi::overdriveOn());
     controlsPage->onFollowPpd = [this](bool on) { if (ui->autoPPDCheckBox->isEnabled()) { ui->autoPPDCheckBox->setChecked(on); syncPages(Snapshot()); } };
     controlsPage->onAutoAcDc = [this](bool on) { if (ui->autoAcDcProfilesGroupBox->isEnabled()) { ui->autoAcDcProfilesGroupBox->setChecked(on); syncPages(Snapshot()); } };
     controlsPage->onAcDcMode = [this](bool charger, int i) { (charger ? ui->userModeOnChargerComboBox : ui->userModeOnBatteryComboBox)->setCurrentIndex(i); syncPages(Snapshot()); };
@@ -1681,4 +1690,46 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
         exLastNotify = now; if (trayIcon) trayIcon->showMessage("MControlCenter", tr("Battery calibration is due (MSI recommends it %1). Open Battery > Start calibration when it suits you.").arg(calIntervalDays() == 90 ? tr("every 3 months when mostly plugged in") : tr("monthly when you use the battery a lot")), QSystemTrayIcon::Information, 10000);
     }
     batteryPage->setExercise(exerciseView());
+}
+
+// MSI firmware features list on the Controls page: what this laptop has, and what a newer BIOS could add.
+void MainWindow::refreshFeatures() {
+    QVector<ControlsPage::FeatureLine> lines;
+    const QString bios = msiwmi::biosVersion();
+    for (const msiwmi::Feature &f : msiwmi::features()) {
+        ControlsPage::FeatureLine l; l.name = f.name; l.usable = f.usable();
+        if (!f.present) l.status = tr("not on this laptop");
+        else if (!f.biosOk) { l.needsBios = true; l.status = tr("needs BIOS %1 or newer").arg(QString("%1.%2").arg(bios.section('.', 0, -2)).arg(f.minBios, 3, 16, QChar('0')).toUpper()); l.note = f.what + "."; }
+        else l.status = tr("available");
+        lines.append(l);
+    }
+    controlsPage->setFeatures(lines, bios, fanCheckResult, fanCheckBusy);
+}
+void MainWindow::runFanCheck() {
+    if (fanCheckBusy) return;
+    if (!msiwmi::setBit(0x5B, 5, true)) { fanCheckResult = tr("The firmware did not accept the fan check. Nothing was changed."); refreshFeatures(); return; }
+    fanCheckBusy = true; fanCheckTicks = 0; fanCheckResult = tr("The fans may spin up for a minute or two. This is normal."); refreshFeatures(); fanCheckTimer.start();
+}
+void MainWindow::fanCheckPoll() {
+    const int v = msiwmi::read(0x5B); ++fanCheckTicks;
+    const bool done = v >= 0 && !(v & 0x20) ? true : (v >= 0 && (v & 0x0F) != 0 && fanCheckTicks > 3);
+    if (done || fanCheckTicks > 80 || v < 0) {
+        fanCheckTimer.stop(); fanCheckBusy = false;
+        auto word = [](int hi, int lo) { return hi && lo ? QObject::tr("clean the fans soon") : hi ? QObject::tr("clean the fans when you can") : lo ? QObject::tr("OK") : QObject::tr("no result"); };
+        if (v >= 0 && done) fanCheckResult = tr("CPU fan: %1. GPU fan: %2.").arg(word((v >> 1) & 1, v & 1), word((v >> 3) & 1, (v >> 2) & 1));
+        else fanCheckResult = tr("The fan check did not finish. Nothing was changed.");
+        if (v >= 0 && (v & 0x20)) msiwmi::setBit(0x5B, 5, false);
+        refreshFeatures();
+    }
+}
+
+// One-time notice: this is a community project that changes real hardware settings.
+void MainWindow::firstRunNotice() {
+    if (Settings().getValue("Legal/accepted").toString() == "1") return;
+    QMessageBox box(this); box.setIcon(QMessageBox::Warning); box.setWindowTitle(tr("Before you start"));
+    box.setText(tr("MControlCenter is an unofficial community project. It is not made, endorsed or supported by MSI."));
+    box.setInformativeText(tr("It is still in testing and changes real hardware settings (fans, charge limit, battery calibration, keyboard lighting, panel options). It is provided \"as is\", without any warranty, under the GPL-3.0 licence. The authors and contributors are not responsible for any damage, data loss, or warranty problems. You use it entirely at your own risk.\n\nIf you are unsure about a feature, leave it alone."));
+    QPushButton *ok = box.addButton(tr("I understand, continue"), QMessageBox::AcceptRole); QPushButton *quit = box.addButton(tr("Quit"), QMessageBox::RejectRole); box.setDefaultButton(quit);
+    box.exec();
+    if (box.clickedButton() == ok) Settings::setValue("Legal/accepted", "1"); else QCoreApplication::quit();
 }

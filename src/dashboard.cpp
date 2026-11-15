@@ -1,4 +1,5 @@
 #include "dashboard.h"
+#include "settings.h"
 #include "sensors.h"
 #include "uikit.h"
 #include <QPainter>
@@ -164,9 +165,11 @@ protected:
         if (limitOk) {
             double w = (b.width() - 12) / 3; const int v[3] = {60, 80, 100};
             for (int i = 0; i < 3; ++i) {
-                chips[i] = QRectF(b.left() + i * (w + 6), b.bottom() - 24, w, 24); bool on = (i == 0 && limit <= 60) || (i == 1 && limit > 60 && limit <= 80) || (i == 2 && limit > 80);
+                chips[i] = QRectF(b.left() + i * (w + 6), b.bottom() - 36, w, 36); bool on = (i == 0 && limit <= 60) || (i == 1 && limit > 60 && limit <= 80) || (i == 2 && limit > 80);
                 p.setPen(QPen(on ? gAccent : kLine, 1)); p.setBrush(on ? gAccent : QBrush(Qt::NoBrush)); p.drawPath(chamfer(chips[i], 6));
-                p.setFont(fnt(RAJ, 14, QFont::DemiBold, 1)); p.setPen(on ? kBg : kText); p.drawText(chips[i], Qt::AlignCenter, QString("%1%").arg(v[i]));
+                static const char *nm[3] = {"BATTERY", "BALANCED", "MOBILITY"};      // MSI's names: Best for Battery / Balanced / Best for Mobility
+                p.setFont(fnt(RAJ, 14, QFont::DemiBold, 1)); p.setPen(on ? kBg : kText); p.drawText(QRectF(chips[i].left(), chips[i].top() + 3, chips[i].width(), 20), Qt::AlignCenter, QString("%1%").arg(v[i]));
+                p.setFont(fnt(MONO, 8, QFont::Medium, 1)); p.setPen(on ? alpha(kBg, 0.85) : kDim); p.drawText(QRectF(chips[i].left(), chips[i].top() + 21, chips[i].width(), 12), Qt::AlignCenter, nm[i]);
             }
         }
     }
@@ -175,7 +178,7 @@ protected:
 // ───────────────────────────── 04 history graph ─────────────────────────────
 class GraphPanel : public Panel {
 public:
-    GraphPanel(QWidget *p) : Panel("", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(118); }
+    GraphPanel(QWidget *p) : Panel("", "TELEMETRY · LAST 3 MIN", p) { setMinimumHeight(92); }
     void push(double cpu, double gpu, double watts) { for (auto *d : {&c, &g, &w}) if (d->size() >= N) d->pop_front(); c.push_back(cpu); g.push_back(gpu); w.push_back(watts); }
     bool hasGpu = false;
     QString csv() const { QString o = "seconds_ago,cpu_c,gpu_c,battery_watts\n"; int n = int(c.size()); for (int i = 0; i < n; ++i) o += QString("%1,%2,%3,%4\n").arg(n - 1 - i).arg(c[i] < 0 ? QString() : QString::number(c[i], 'f', 0)).arg(g[i] < 0 ? QString() : QString::number(g[i], 'f', 0)).arg(w[i], 0, 'f', 1); return o; }
@@ -269,6 +272,25 @@ protected:
     }
 };
 
+
+// Always-visible reminder that this is an unofficial, testing-stage app. Stays until dismissed; comes back after every version change.
+class DisclaimerBar : public QWidget {
+public:
+    DisclaimerBar(QWidget *p) : QWidget(p) { setFixedHeight(22); setMouseTracking(true); }
+    std::function<void()> onHide; QRectF btn;
+protected:
+    void mousePressEvent(QMouseEvent *e) override { if (btn.contains(e->position()) && onHide) onHide(); }
+    void mouseMoveEvent(QMouseEvent *e) override { setCursor(btn.contains(e->position()) ? Qt::PointingHandCursor : Qt::ArrowCursor); }
+    void paintEvent(QPaintEvent *) override {
+        QPainter p(this); p.setRenderHint(QPainter::Antialiasing); QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        p.setPen(QPen(alpha(gAccent, 0.55), 1)); p.setBrush(alpha(gAccent, 0.08)); p.drawPath(chamfer(r, 6));
+        p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(gAccent); p.drawText(QRectF(12, 0, 110, height()), Qt::AlignLeft | Qt::AlignVCenter, "UNOFFICIAL · BETA");
+        p.setPen(kDim); p.drawText(QRectF(132, 0, width() - 250, height()), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, QString::fromUtf8("Community project, not made or supported by MSI. Still in testing: it changes real hardware settings. Use at your own risk."));
+        btn = QRectF(width() - 100, 2, 90, height() - 4); p.setPen(QPen(kLine, 1)); p.setBrush(Qt::NoBrush); p.drawPath(chamfer(btn, 4));
+        p.setFont(fnt(MONO, 9, QFont::Medium, 1)); p.setPen(kText); p.drawText(btn, Qt::AlignCenter, "GOT IT");
+    }
+};
+
 // ───────────────────────────── page ─────────────────────────────
 DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     setObjectName("dashboard");
@@ -276,6 +298,9 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     if (!fontsLoaded) { fontsLoaded = true; for (const char *f : {"Rajdhani-Medium", "Rajdhani-SemiBold", "Rajdhani-Bold", "IBMPlexMono-Regular", "IBMPlexMono-Medium"}) QFontDatabase::addApplicationFont(QString(":/fonts/%1.ttf").arg(f)); }
 
     auto *root = new QVBoxLayout(this); root->setContentsMargins(18, 12, 18, 14); root->setSpacing(8);
+    disclaimer = new DisclaimerBar(this); root->addWidget(disclaimer);
+    { const QString key = QString("Legal/stripHidden"); if (Settings().getValue(key).toString() == MControlCenter_VERSION) disclaimer->hide();
+      disclaimer->onHide = [this, key] { Settings::setValue(key, QString(MControlCenter_VERSION)); disclaimer->hide(); }; }
     header = new HeaderBar(this); root->addWidget(header);
     banner = new BannerBar(this); root->addWidget(banner);
     banner->onClick = [this] { emit fixRequested(); };

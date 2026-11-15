@@ -42,6 +42,8 @@ public slots:
     Q_NOREPLY void putValue(const int &address, const int &value) const;
     [[nodiscard]] bool isEcSysModuleLoaded() const;
     [[nodiscard]] bool loadEcSysModule() const;
+    [[nodiscard]] QByteArray wmiGet(const int &reg) const;
+    [[nodiscard]] bool wmiSetBit(const int &reg, const int &bit, const bool &on) const;
 };
 
 #endif // HELPER_H
