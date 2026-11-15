@@ -48,6 +48,7 @@ $SUDO install -Dm644 resources/mcontrolcenter.desktop /usr/share/applications/mc
 $SUDO install -Dm644 resources/mcontrolcenter.svg /usr/share/icons/hicolor/scalable/apps/mcontrolcenter.svg
 $SUDO install -Dm644 src/helper/mcontrolcenter-helper.conf /usr/share/dbus-1/system.d/mcontrolcenter-helper.conf
 $SUDO install -Dm644 src/helper/mcontrolcenter.helper.service /usr/share/dbus-1/system-services/mcontrolcenter.helper.service
+$SUDO pkill -f /usr/libexec/mcontrolcenter-helper 2>/dev/null || true      # an old helper would keep running the previous code; D-Bus starts the new one on demand
 $SUDO install -Dm755 scripts/mcontrolcenter-doctor /usr/libexec/mcontrolcenter/mcontrolcenter-doctor
 $SUDO install -Dm755 scripts/mcontrolcenter-gpu /usr/libexec/mcontrolcenter/mcontrolcenter-gpu
 $SUDO install -Dm755 scripts/mcontrolcenter-battery /usr/libexec/mcontrolcenter/mcontrolcenter-battery
