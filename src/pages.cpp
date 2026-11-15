@@ -309,6 +309,7 @@ SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
     { Row x; x.type = Row::Text; x.label = "Needs the 'gamemode' package (many launchers use it automatically). Nothing changes until a game actually requests it."; automation->rows.push_back(x); }
     { Row x; x.type = Row::Switch; x.label = "App profiles"; x.sub = "Switch mode and screen rate while chosen apps run"; x.click = [this] { if (onChange) onChange(AppProfiles, automation->rows[2].on ? 0 : 1); }; automation->rows.push_back(x); }
     { Row x; x.type = Row::Button; x.label = "Edit app profiles"; x.click = [this] { if (onChange) onChange(AppProfilesEdit, 0); }; automation->rows.push_back(x); }
+    { Row x; x.type = Row::Switch; x.label = "Desktop companion"; x.sub = "A small floating widget that reacts to your laptop's state. Purely decorative, off by default."; x.click = [this] { if (onChange) onChange(Companion, automation->rows[4].on ? 0 : 1); }; automation->rows.push_back(x); }
     automation->relayout();
     { Row x; x.type = Row::Button; x.label = "Export last 3 min telemetry (CSV)"; x.click = [this] { if (onChange) onChange(ExportCsv, 0); }; data->rows.push_back(x); }
     { Row x; x.type = Row::Text; x.label = "Temperatures, fan and power samples to a CSV file in your home folder: handy for bug reports or comparing modes."; data->rows.push_back(x); }
@@ -318,6 +319,7 @@ SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
 void SettingsPage::setAppProfiles(bool on, int n) { auto &R = automation->rows; const QString l = n ? QString("Edit app profiles (%1)").arg(n) : QString("Add an app profile"); if (R[2].on == on && R[3].label == l) return; R[2].on = on; R[3].label = l; automation->relayout(); automation->update(); kick(); }
 void SettingsPage::setReduceMotion(bool on) { auto &R = startup->rows; if (R[3].on == on) return; R[3].on = on; R[3].anim = on ? 1 : 0; startup->update(); kick(); }
 void SettingsPage::setCheckBiosList(bool on) { auto &R = data->rows; if (R[2].on == on) return; R[2].on = on; data->update(); kick(); }
+void SettingsPage::setCompanion(bool on) { auto &R = automation->rows; if (R[4].on == on) return; R[4].on = on; automation->update(); kick(); }
 void SettingsPage::setState(bool a, bool t, int ti, bool g, bool avail) {
     bool ch = startup->rows[0].on != a || startup->rows[1].on != t || startup->rows[2].sel != ti || startup->rows[2].visible != t || automation->rows[0].on != g || automation->rows[0].enabled != avail;
     startup->rows[0].on = a; startup->rows[1].on = t; startup->rows[2].sel = ti; startup->rows[2].visible = t; automation->rows[0].on = g; automation->rows[0].enabled = true;

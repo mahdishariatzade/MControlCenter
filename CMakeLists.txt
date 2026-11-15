@@ -33,6 +33,7 @@ set(PROJECT_SOURCES
     src/helper.cpp src/helper.h
     src/msiwmi.cpp src/msiwmi.h
     src/biosupdate.cpp src/biosupdate.h
+    src/companion.cpp src/companion.h
     src/msi-ec_helper.cpp src/msi-ec_helper.h
     src/settings.cpp src/settings.h
     src/dashboard.cpp src/dashboard.h src/theme.h

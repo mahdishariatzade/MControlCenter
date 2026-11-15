@@ -106,9 +106,10 @@ private:
 class SettingsPage : public AnimPage {
 public:
     explicit SettingsPage(QWidget *p);
-    enum Item { Autostart, ThermalAlert, ThermalLevel, GameMode, ExportCsv, AppProfiles, AppProfilesEdit, ReduceMotion, CheckBiosList };
+    enum Item { Autostart, ThermalAlert, ThermalLevel, GameMode, ExportCsv, AppProfiles, AppProfilesEdit, ReduceMotion, CheckBiosList, Companion };
     void setReduceMotion(bool on);
     void setCheckBiosList(bool on);
+    void setCompanion(bool on);
     void setAppProfiles(bool on, int rules);
     void setState(bool autostart, bool thermal, int thermalIdx, bool gameMode, bool gameAvailable);
     std::function<void(Item, int)> onChange;

@@ -19,6 +19,7 @@
 #include "mainwindow.h"
 #include "msiwmi.h"
 #include "biosupdate.h"
+#include "companion.h"
 #include <QDesktopServices>
 #include "./ui_mainwindow.h"
 #include "operate.h"
@@ -1323,6 +1324,7 @@ void MainWindow::buildPages() {
         if (c->isEnabled()) { c->click(); controlsPage->setSwitch(s, c->isChecked()); } };
     controlsPage->onFanCheck = [this] { runFanCheck(); }; controlsPage->onBiosHelp = [] { QDesktopServices::openUrl(QUrl(msiwmi::supportUrl())); };
     biosCheck = new BiosUpdateCheck(this); connect(biosCheck, &BiosUpdateCheck::updated, this, [this] { refreshFeatures(); }); biosCheck->refreshIfDue();
+    setCompanionVisible(Settings().getValue("Settings/companion").toBool());
     connect(&fanCheckTimer, &QTimer::timeout, this, &MainWindow::fanCheckPoll); fanCheckTimer.setInterval(3000);
     controlsPage->setSwitch(ControlsPage::Overdrive, msiwmi::overdriveOn());
     controlsPage->onFollowPpd = [this](bool on) { if (ui->autoPPDCheckBox->isEnabled()) { ui->autoPPDCheckBox->setChecked(on); syncPages(Snapshot()); } };
@@ -1361,6 +1363,14 @@ void MainWindow::syncPages(const Snapshot &s) {
         batteryPage->setLimit(s.d.chargeLimit, ui->batteryTab->isEnabled() || msiEcPresent());
         batteryPage->setHealth(pt.state, pt.health, pt.cycles, pt.draw, pt.eta, s.cap);
         fanPage->setLive(s.d.cpuTemp, s.d.cpuFanPct, qMax(s.d.gpuTemp, 0), s.d.gpuFanPct);
+        if (companion) {
+            CompanionWidget::Mood mood = CompanionWidget::Idle;
+            if (s.d.coolerBoost) mood = CompanionWidget::Boosted;
+            else if (s.d.cpuTemp >= 85) mood = CompanionWidget::Hot;
+            else if (!s.ac && !exAuto && s.cap > 0 && s.cap < 20) mood = CompanionWidget::Low;
+            else if (s.ac || exAuto) mood = CompanionWidget::Happy;
+            companion->setMood(mood);
+        }
     }
     const int m[4] = {0, 1, 2, 3};
     controlsPage->setProfileState(ui->autoPPDCheckBox->isChecked(), ui->autoAcDcProfilesGroupBox->isChecked(), m[qBound(0, ui->userModeOnChargerComboBox->currentIndex(), 3)], m[qBound(0, ui->userModeOnBatteryComboBox->currentIndex(), 3)]);
@@ -1464,6 +1474,7 @@ void MainWindow::syncSettingsPage() {
                                        s.getValue("Settings/gameMode").toBool(), !QStandardPaths::findExecutable("gamemoded").isEmpty());
     settingsPage->setReduceMotion(kit::gReduceMotion);
     settingsPage->setCheckBiosList(!s.isValueExist("Settings/checkBiosList") || s.getValue("Settings/checkBiosList").toBool());
+    settingsPage->setCompanion(s.getValue("Settings/companion").toBool());
     if (appProfiles) settingsPage->setAppProfiles(appProfiles->enabled, appProfiles->rules.size());
 }
 
@@ -1476,6 +1487,7 @@ void MainWindow::settingChanged(SettingsPage::Item what, int value) {
         case SettingsPage::GameMode: { bool on = value != 0; Settings::setValue("Settings/gameMode", on); if (on) gameTimer.start(); else { gameTimer.stop(); if (gameActive) { gameActive = false; if (gameSavedMode >= 0) setModeIndex(gameSavedMode); setCoolerBoostState(gameSavedBoost); } } break; }
         case SettingsPage::ReduceMotion: kit::gReduceMotion = value != 0; Settings::setValue("UI/reduceMotion", value != 0); break;
         case SettingsPage::CheckBiosList: Settings::setValue("Settings/checkBiosList", value != 0); if (value) biosCheck->refreshIfDue(); break;
+        case SettingsPage::Companion: Settings::setValue("Settings/companion", value != 0); setCompanionVisible(value != 0); break;
         case SettingsPage::AppProfiles: appProfiles->setEnabled(value != 0); break;
         case SettingsPage::AppProfilesEdit: appProfiles->edit(this); break;
         case SettingsPage::ExportCsv: {
@@ -1748,4 +1760,9 @@ void MainWindow::firstRunNotice() {
     QPushButton *ok = box.addButton(tr("I understand, continue"), QMessageBox::AcceptRole); QPushButton *quit = box.addButton(tr("Quit"), QMessageBox::RejectRole); box.setDefaultButton(quit);
     box.exec();
     if (box.clickedButton() == ok) Settings::setValue("Legal/accepted", "1"); else QCoreApplication::quit();
+}
+
+void MainWindow::setCompanionVisible(bool on) {
+    if (on && !companion) { companion = new CompanionWidget(nullptr); companion->placeRemembered(); }
+    if (companion) companion->setVisible(on);
 }

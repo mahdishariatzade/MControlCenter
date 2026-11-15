@@ -69,6 +69,7 @@ private:
     QTimer fanCheckTimer; QString fanCheckResult; bool fanCheckBusy = false; int fanCheckTicks = 0;
     void firstRunNotice(); void refreshFeatures();
     class BiosUpdateCheck *biosCheck = nullptr; void runFanCheck(); void fanCheckPoll();
+    class CompanionWidget *companion = nullptr; void setCompanionVisible(bool on);
     bool exEnabled = true, exWarnedNear = false, exWarnedLow = false; int exStage = 0, exOrigLimit = 60, exLow = 100; qint64 exLast = 0, exSince = 0, exStageAt = 0, exLowAt = 0, exLastNotify = 0, exLastTick = 0, exLastSave = 0; double exAcSec = 0, exBatSec = 0; bool exAuto = false; QString exAutoMsg, exAutoEta; QVector<HistPoint> histPts; QVector<HistEvent> histEv; QString histNote; QDate histLast; bool histLoaded = false; void historyLoad(); void historyAppend(const QString &row); bool calOrphan = false; QString bannerKind; void restoreCharger(); QProcess *exProc = nullptr; qint64 exProcAt = 0;
     double acShare() const; int calIntervalDays() const; int recommendedLimit() const;
     void exerciseLoad(); void exerciseSave(); void batteryExercise(const Snapshot &s); void exerciseAction(int what, int value); ExerciseView exerciseView() const;
