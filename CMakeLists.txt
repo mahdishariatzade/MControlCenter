@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(MControlCenter VERSION 0.5.2 LANGUAGES CXX)
+project(MControlCenter VERSION 0.6.1 LANGUAGES CXX)
 # release builds pass -DRELEASE_VERSION=<tag without v> so the app, About page and package names all agree with the git tag
 if(RELEASE_VERSION)
     set(PROJECT_VERSION ${RELEASE_VERSION})

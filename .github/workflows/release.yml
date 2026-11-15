@@ -60,4 +60,4 @@ jobs:
         run: |
           ls -la dist
           gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes \
-            --notes "Packages: .deb for Ubuntu 24.04+/Debian 13+/Kali, .rpm for Fedora. Other distros: build from source with ./install.sh. See the README's compatibility table for what is verified."
+            --notes "Security: the root helper now checks every request with polkit and only accepts the EC writes the app needs; earlier versions let any local user write EC registers. Upgrading is recommended (full details in CHANGELOG.md). Packages: .deb for Ubuntu 24.04+/Debian 13+/Kali, .rpm for Fedora. Other distros: build from source with ./install.sh. See the README's compatibility table for what is verified."
