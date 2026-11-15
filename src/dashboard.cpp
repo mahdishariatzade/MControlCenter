@@ -281,8 +281,9 @@ DashboardPage::DashboardPage(QWidget *parent) : QWidget(parent) {
     banner->onClick = [this] { emit fixRequested(); };
 
     thermal = new ThermalPanel(this); fans = new FanPanel(this); power = new PowerPanel(this); graph = new GraphPanel(this);
-    auto *row1 = new QHBoxLayout; row1->setSpacing(10); row1->addWidget(thermal, 5); row1->addWidget(fans, 3); row1->addWidget(power, 4); root->addLayout(row1, 5);
-    root->addWidget(graph, 3);
+    auto *row1 = new QHBoxLayout; row1->setSpacing(10); row1->addWidget(thermal, 5); row1->addWidget(fans, 3); row1->addWidget(power, 4); root->addLayout(row1, 3);
+    for (QWidget *w : {static_cast<QWidget *>(thermal), static_cast<QWidget *>(fans), static_cast<QWidget *>(power)}) w->setMaximumHeight(350);   // the three cards are designed for ~272-350 px; on a big or full-screen window the extra height is shared with the telemetry graph (capped too) instead of stretching the cards into empty space
+    graph->setMaximumHeight(360); root->addWidget(graph, 2);
     modes = new TileStrip(true, this); presets = new TileStrip(false, this);
     modeLabel = new SectionLabel("POWER MODE", "How hard the laptop works. One mode is always on.", this); presetLabel = new SectionLabel("QUICK SETUPS", "Shortcuts: one tap changes the mode, fans and charge limit together.", this);
     root->addSpacing(2); root->addWidget(modeLabel); root->addWidget(modes); root->addSpacing(6); root->addWidget(presetLabel); root->addWidget(presets);

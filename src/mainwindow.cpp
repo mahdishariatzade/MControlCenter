@@ -250,7 +250,7 @@ MainWindow::MainWindow(QWidget *parent)
     timerSleepWatcher.start();
 
     if (const char *shot = getenv("MCC_SHOT")) {            // dev only: render every tab to PNGs and quit
-        QString prefix = QString::fromUtf8(shot); resize(1100, 760); show();
+        QString prefix = QString::fromUtf8(shot); { int w = 1100, h = 760; if (sscanf(getenv("MCC_SHOT_SIZE") ? getenv("MCC_SHOT_SIZE") : "", "%dx%d", &w, &h) != 2) { w = 1100; h = 760; } resize(w, h); } show();
         QTimer::singleShot(2500, this, [this, prefix] {
             for (int i = 0; i < ui->tabWidget->count(); ++i) {
                 if (!ui->tabWidget->isTabVisible(i)) continue; ui->tabWidget->setCurrentIndex(i);
