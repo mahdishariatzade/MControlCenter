@@ -312,10 +312,12 @@ SettingsPage::SettingsPage(QWidget *p) : AnimPage(p) {
     automation->relayout();
     { Row x; x.type = Row::Button; x.label = "Export last 3 min telemetry (CSV)"; x.click = [this] { if (onChange) onChange(ExportCsv, 0); }; data->rows.push_back(x); }
     { Row x; x.type = Row::Text; x.label = "Temperatures, fan and power samples to a CSV file in your home folder: handy for bug reports or comparing modes."; data->rows.push_back(x); }
+    { Row x; x.type = Row::Switch; x.label = "Check for known BIOS updates"; x.sub = "Downloads a small, community-maintained list from this project's GitHub repo (never from MSI) to suggest when a newer BIOS might unlock more features"; x.on = true; x.click = [this] { if (onChange) onChange(CheckBiosList, data->rows[2].on ? 0 : 1); }; data->rows.push_back(x); }
     data->relayout();
 }
 void SettingsPage::setAppProfiles(bool on, int n) { auto &R = automation->rows; const QString l = n ? QString("Edit app profiles (%1)").arg(n) : QString("Add an app profile"); if (R[2].on == on && R[3].label == l) return; R[2].on = on; R[3].label = l; automation->relayout(); automation->update(); kick(); }
 void SettingsPage::setReduceMotion(bool on) { auto &R = startup->rows; if (R[3].on == on) return; R[3].on = on; R[3].anim = on ? 1 : 0; startup->update(); kick(); }
+void SettingsPage::setCheckBiosList(bool on) { auto &R = data->rows; if (R[2].on == on) return; R[2].on = on; data->update(); kick(); }
 void SettingsPage::setState(bool a, bool t, int ti, bool g, bool avail) {
     bool ch = startup->rows[0].on != a || startup->rows[1].on != t || startup->rows[2].sel != ti || startup->rows[2].visible != t || automation->rows[0].on != g || automation->rows[0].enabled != avail;
     startup->rows[0].on = a; startup->rows[1].on = t; startup->rows[2].sel = ti; startup->rows[2].visible = t; automation->rows[0].on = g; automation->rows[0].enabled = true;
@@ -325,11 +327,12 @@ void SettingsPage::setState(bool a, bool t, int ti, bool g, bool avail) {
 
 
 // Which MSI firmware features this laptop has, and which ones a newer BIOS could add (MSI's own app has the same BIOS gates).
-void ControlsPage::setFeatures(const QVector<FeatureLine> &f, const QString &bios, const QString &fanResult, bool fanBusy) {
+void ControlsPage::setFeatures(const QVector<FeatureLine> &f, const QString &bios, const QString &fanResult, bool fanBusy, const QString &biosHint, const QString &ageHint) {
     features->rows.clear();
     if (f.isEmpty() && bios.isEmpty()) { features->hide(); return; }
     features->show();
     if (!bios.isEmpty()) { Row r; r.type = Row::Info; r.label = "BIOS"; r.value = bios; features->rows.push_back(r); }
+    if (!ageHint.isEmpty()) { Row t; t.type = Row::Text; t.label = ageHint; features->rows.push_back(t); }
     for (const FeatureLine &l : f) { Row r; r.type = Row::Info; r.label = l.name; r.value = l.status; r.accent = l.needsBios; features->rows.push_back(r); if (!l.note.isEmpty()) { Row t; t.type = Row::Text; t.label = l.note; features->rows.push_back(t); } }
     bool anyBios = false, fan = false; for (const FeatureLine &l : f) { anyBios |= l.needsBios; fan |= (l.name == "Fan dust check" && l.usable); }
     if (fan) { Row b; b.type = Row::Button; b.label = fanBusy ? "Checking the fans..." : "Run fan dust check"; b.enabled = !fanBusy; b.accent = true; b.click = [this] { if (onFanCheck) onFanCheck(); }; features->rows.push_back(b); }
@@ -338,5 +341,6 @@ void ControlsPage::setFeatures(const QVector<FeatureLine> &f, const QString &bio
         Row t; t.type = Row::Text; t.label = QString("Your BIOS is %1. MSI's own app only enables the features marked above on a newer BIOS, so updating it may unlock them. Check MSI's support page for your exact model: a BIOS update is your own decision and carries its own risk (a failed flash can make a laptop unbootable), so follow MSI's instructions and keep the charger connected.").arg(bios.section(' ', 0, 0)); features->rows.push_back(t);
         Row b; b.type = Row::Button; b.label = "Open MSI's support page"; b.click = [this] { if (onBiosHelp) onBiosHelp(); }; features->rows.push_back(b);
     }
+    if (!biosHint.isEmpty()) { Row t; t.type = Row::Text; t.label = biosHint; features->rows.push_back(t); }
     features->relayout(); kick();
 }

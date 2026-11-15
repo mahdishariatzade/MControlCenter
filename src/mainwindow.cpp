@@ -18,6 +18,7 @@
 
 #include "mainwindow.h"
 #include "msiwmi.h"
+#include "biosupdate.h"
 #include <QDesktopServices>
 #include "./ui_mainwindow.h"
 #include "operate.h"
@@ -1321,6 +1322,7 @@ void MainWindow::buildPages() {
         QCheckBox *c = s == ControlsPage::Webcam ? ui->webCamCheckBox : s == ControlsPage::FnSwap ? ui->fnSuperSwapCheckBox : s == ControlsPage::UsbShare ? ui->usbPowerShareCheckBox : ui->coolerBoostCheckBox;
         if (c->isEnabled()) { c->click(); controlsPage->setSwitch(s, c->isChecked()); } };
     controlsPage->onFanCheck = [this] { runFanCheck(); }; controlsPage->onBiosHelp = [] { QDesktopServices::openUrl(QUrl(msiwmi::supportUrl())); };
+    biosCheck = new BiosUpdateCheck(this); connect(biosCheck, &BiosUpdateCheck::updated, this, [this] { refreshFeatures(); }); biosCheck->refreshIfDue();
     connect(&fanCheckTimer, &QTimer::timeout, this, &MainWindow::fanCheckPoll); fanCheckTimer.setInterval(3000);
     controlsPage->setSwitch(ControlsPage::Overdrive, msiwmi::overdriveOn());
     controlsPage->onFollowPpd = [this](bool on) { if (ui->autoPPDCheckBox->isEnabled()) { ui->autoPPDCheckBox->setChecked(on); syncPages(Snapshot()); } };
@@ -1461,6 +1463,7 @@ void MainWindow::syncSettingsPage() {
     Settings s; settingsPage->setState(autostartEnabled(), s.getValue("Settings/thermalAlert").toBool(), qBound(0, s.getValue("Settings/thermalLevel").toInt(), 2),
                                        s.getValue("Settings/gameMode").toBool(), !QStandardPaths::findExecutable("gamemoded").isEmpty());
     settingsPage->setReduceMotion(kit::gReduceMotion);
+    settingsPage->setCheckBiosList(!s.isValueExist("Settings/checkBiosList") || s.getValue("Settings/checkBiosList").toBool());
     if (appProfiles) settingsPage->setAppProfiles(appProfiles->enabled, appProfiles->rules.size());
 }
 
@@ -1472,6 +1475,7 @@ void MainWindow::settingChanged(SettingsPage::Item what, int value) {
         case SettingsPage::ThermalLevel: Settings::setValue("Settings/thermalLevel", value); break;
         case SettingsPage::GameMode: { bool on = value != 0; Settings::setValue("Settings/gameMode", on); if (on) gameTimer.start(); else { gameTimer.stop(); if (gameActive) { gameActive = false; if (gameSavedMode >= 0) setModeIndex(gameSavedMode); setCoolerBoostState(gameSavedBoost); } } break; }
         case SettingsPage::ReduceMotion: kit::gReduceMotion = value != 0; Settings::setValue("UI/reduceMotion", value != 0); break;
+        case SettingsPage::CheckBiosList: Settings::setValue("Settings/checkBiosList", value != 0); if (value) biosCheck->refreshIfDue(); break;
         case SettingsPage::AppProfiles: appProfiles->setEnabled(value != 0); break;
         case SettingsPage::AppProfilesEdit: appProfiles->edit(this); break;
         case SettingsPage::ExportCsv: {
@@ -1695,9 +1699,11 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
 // MSI firmware features list on the Controls page: what this laptop has, and what a newer BIOS could add.
 void MainWindow::refreshFeatures() {
     QVector<ControlsPage::FeatureLine> lines;
-    QString bios = msiwmi::biosVersion();
+    const QString rawBios = msiwmi::biosVersion();           // e.g. "E15P4IMS.106", used for comparisons
+    QString bios = rawBios; QString ageHint;                 // bios: short value for the Info row; ageHint: its own wrapped line (too long to share a line with the label)
     { const QDate d = QDate::fromString(QFile("/sys/class/dmi/id/bios_date").open(QIODevice::ReadOnly) ? slurp("/sys/class/dmi/id/bios_date") : QString(), "MM/dd/yyyy");
-      if (d.isValid()) { const int months = d.daysTo(QDate::currentDate()) / 30; bios += QString(" · %1").arg(d.toString("d MMM yyyy")) + (months >= 6 ? tr(" · %1 months old: worth checking MSI's support page for updates").arg(months) : QString()); } }
+      if (d.isValid()) { const int months = d.daysTo(QDate::currentDate()) / 30; bios += QString(" · %1").arg(d.toString("d MMM yyyy"));
+        if (months >= 6) ageHint = tr("Your BIOS is about %1 months old. Worth checking MSI's support page for updates.").arg(months); } }
     for (const msiwmi::Feature &f : msiwmi::features()) {
         ControlsPage::FeatureLine l; l.name = f.name; l.usable = f.usable();
         if (!f.present) l.status = tr("not on this laptop");
@@ -1705,7 +1711,15 @@ void MainWindow::refreshFeatures() {
         else l.status = tr("available");
         lines.append(l);
     }
-    controlsPage->setFeatures(lines, bios, fanCheckResult, fanCheckBusy);
+    // Community-maintained hint: is a newer BIOS *known* for this board? Separate from the per-feature list above;
+    // compares only against what contributors have entered in data/bios-versions.json, never a live MSI query.
+    QString biosHintLine;
+    if (biosCheck) {
+        const BiosHint h = biosCheck->forBoard(lastCaps.board, rawBios);
+        if (h.newer) biosHintLine = tr("A newer BIOS is listed for this board: %1 (%2). Community-reported, not an official MSI check — verify on MSI's support page before updating. %3").arg(h.latest, h.date, h.note);
+        else if (h.known) biosHintLine = tr("Your BIOS matches the newest version this community list knows about for this board (last checked by a contributor: %1).").arg(h.source);
+    }
+    controlsPage->setFeatures(lines, bios, fanCheckResult, fanCheckBusy, biosHintLine, ageHint);
 }
 void MainWindow::runFanCheck() {
     if (fanCheckBusy) return;

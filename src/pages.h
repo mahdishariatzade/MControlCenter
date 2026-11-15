@@ -38,7 +38,7 @@ public:
     void setGpu(bool known, bool supported, const QString &reason, const QString &driver, const QString &power, const QString &mode, qint64 active, qint64 suspended);
     void setGpuBusy(const QString &msg);
     struct FeatureLine { QString name, status, note; bool needsBios = false, usable = false; };
-    void setFeatures(const QVector<FeatureLine> &f, const QString &bios, const QString &fanResult, bool fanBusy);
+    void setFeatures(const QVector<FeatureLine> &f, const QString &bios, const QString &fanResult, bool fanBusy, const QString &biosHint = QString(), const QString &ageHint = QString());
     std::function<void()> onFanCheck, onBiosHelp;
     std::function<void(Sw)> onSwitch; std::function<void(bool)> onFollowPpd, onAutoAcDc; std::function<void(bool, int)> onAcDcMode;
     std::function<void(bool)> onGpuMode; std::function<void()> onReboot;
@@ -106,8 +106,9 @@ private:
 class SettingsPage : public AnimPage {
 public:
     explicit SettingsPage(QWidget *p);
-    enum Item { Autostart, ThermalAlert, ThermalLevel, GameMode, ExportCsv, AppProfiles, AppProfilesEdit, ReduceMotion };
+    enum Item { Autostart, ThermalAlert, ThermalLevel, GameMode, ExportCsv, AppProfiles, AppProfilesEdit, ReduceMotion, CheckBiosList };
     void setReduceMotion(bool on);
+    void setCheckBiosList(bool on);
     void setAppProfiles(bool on, int rules);
     void setState(bool autostart, bool thermal, int thermalIdx, bool gameMode, bool gameAvailable);
     std::function<void(Item, int)> onChange;

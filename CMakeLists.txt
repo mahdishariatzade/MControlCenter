@@ -19,6 +19,7 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS
     Widgets
     LinguistTools
     DBus
+    Network
 )
 
 qt_standard_project_setup()
@@ -31,6 +32,7 @@ set(PROJECT_SOURCES
     src/powermonitor.cpp src/powermonitor.h
     src/helper.cpp src/helper.h
     src/msiwmi.cpp src/msiwmi.h
+    src/biosupdate.cpp src/biosupdate.h
     src/msi-ec_helper.cpp src/msi-ec_helper.h
     src/settings.cpp src/settings.h
     src/dashboard.cpp src/dashboard.h src/theme.h
@@ -68,10 +70,13 @@ add_subdirectory(src/helper ${CMAKE_BINARY_DIR}/helper)
 target_link_libraries(mcontrolcenter PRIVATE
     Qt6::Widgets
     Qt6::DBus
+    Qt6::Network
 )
 
+include(GNUInstallDirs)
 target_compile_definitions(mcontrolcenter PRIVATE
-    MControlCenter_VERSION="${PROJECT_VERSION}")
+    MControlCenter_VERSION="${PROJECT_VERSION}"
+    MCC_DATADIR="/usr/share/mcontrolcenter")   # hardcoded like the other runtime paths this project looks up (doctor script, policies, ...): install.sh always installs under /usr regardless of CMAKE_INSTALL_PREFIX
 
 # ───────────────────────────── install + packages (cmake --install, cpack -G DEB / RPM) ─────────────────────────────
 # Mirrors install.sh. Build packages with:  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build && (cd build && cpack)
@@ -90,6 +95,7 @@ install(FILES packaging/70-mcontrolcenter-rgb.rules packaging/71-mcontrolcenter-
 install(FILES packaging/mcontrolcenter-i2c.conf DESTINATION lib/modules-load.d)
 install(FILES packaging/mcontrolcenter-autostart.desktop DESTINATION /etc/xdg/autostart RENAME mcontrolcenter.desktop)
 install(DIRECTORY packaging/msi-wmi-platform/ DESTINATION /usr/src/msi-wmi-platform-1.0)      # DKMS source, built only where the kernel has no msi-wmi-platform
+install(FILES data/bios-versions.json DESTINATION ${CMAKE_INSTALL_DATADIR}/mcontrolcenter)      # bundled fallback for the community BIOS-version hint; the app also tries to refresh this from GitHub
 
 set(CPACK_PACKAGE_NAME "mcontrolcenter")
 set(CPACK_PACKAGE_VENDOR "p34t1k")

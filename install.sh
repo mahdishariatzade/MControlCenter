@@ -25,6 +25,7 @@ if [ "$UNINSTALL" = 1 ]; then
         /etc/systemd/system/mcontrolcenter-doctor.service /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.battery.policy /etc/systemd/system/mcontrolcenter-battery.service
     $SUDO dkms remove msi-wmi-platform/1.0 --all 2>/dev/null || true; $SUDO rm -rf /usr/src/msi-wmi-platform-1.0
     $SUDO rm -rvf /usr/libexec/mcontrolcenter
+    $SUDO rm -rvf /usr/share/mcontrolcenter
     say "done (the msi-ec driver was left in place; remove it with: sudo dkms remove msi-ec --all)"; exit 0
 fi
 
@@ -48,6 +49,7 @@ $SUDO install -Dm644 resources/mcontrolcenter.desktop /usr/share/applications/mc
 $SUDO install -Dm644 resources/mcontrolcenter.svg /usr/share/icons/hicolor/scalable/apps/mcontrolcenter.svg
 $SUDO install -Dm644 src/helper/mcontrolcenter-helper.conf /usr/share/dbus-1/system.d/mcontrolcenter-helper.conf
 $SUDO install -Dm644 src/helper/mcontrolcenter.helper.service /usr/share/dbus-1/system-services/mcontrolcenter.helper.service
+$SUDO install -Dm644 data/bios-versions.json /usr/share/mcontrolcenter/bios-versions.json      # bundled fallback for the community BIOS-version hint (the app also tries to refresh it from GitHub)
 $SUDO pkill -f /usr/libexec/mcontrolcenter-helper 2>/dev/null || true      # an old helper would keep running the previous code; D-Bus starts the new one on demand
 $SUDO install -Dm755 scripts/mcontrolcenter-doctor /usr/libexec/mcontrolcenter/mcontrolcenter-doctor
 $SUDO install -Dm755 scripts/mcontrolcenter-gpu /usr/libexec/mcontrolcenter/mcontrolcenter-gpu

@@ -13,6 +13,14 @@ This is an open-source fork of [dmitry-s93/MControlCenter](https://github.com/dm
 1. Install, run `mcontrolcenter-doctor report`, open a **Hardware report** issue.
 2. If msi-ec does not know your EC firmware, report it upstream to msi-ec first; this app picks up new firmware automatically once DKMS rebuilds a newer msi-ec.
 
+## Adding your board to the BIOS-version hint list
+`data/bios-versions.json` is a small, best-effort list the app compares against to suggest "a newer BIOS might unlock more features" (see `src/biosupdate.cpp`). It is maintained by contributors, not MSI, and the app never queries MSI's own update service (that would mean shipping MSI's private API credentials, which this project will not do).
+
+To add or update an entry:
+1. Go to your laptop's own support page on msi.com (Drivers & Downloads -> BIOS tab) and find the newest BIOS version and its release date.
+2. Add or edit an object in the `boards` array: `board` (from `/sys/class/dmi/id/board_name`, e.g. `MS-15P4`), `models`, `latest` (the exact version string, e.g. `E15P4IMS.112`), `date` (`YYYY-MM-DD`), `url` (the support page you used), `note`, and `source` (how you know this, e.g. "MSI support page, 2026-11-15").
+3. Open a PR. Keep entries honest: if you are not sure a version is MSI's current newest, say so in `note` rather than guessing.
+
 ## Development
 ```bash
 cmake -S . -B build && cmake --build build -j
