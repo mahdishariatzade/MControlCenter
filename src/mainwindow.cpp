@@ -1695,7 +1695,9 @@ void MainWindow::batteryExercise(const Snapshot &sn) {
 // MSI firmware features list on the Controls page: what this laptop has, and what a newer BIOS could add.
 void MainWindow::refreshFeatures() {
     QVector<ControlsPage::FeatureLine> lines;
-    const QString bios = msiwmi::biosVersion();
+    QString bios = msiwmi::biosVersion();
+    { const QDate d = QDate::fromString(QFile("/sys/class/dmi/id/bios_date").open(QIODevice::ReadOnly) ? slurp("/sys/class/dmi/id/bios_date") : QString(), "MM/dd/yyyy");
+      if (d.isValid()) { const int months = d.daysTo(QDate::currentDate()) / 30; bios += QString(" · %1").arg(d.toString("d MMM yyyy")) + (months >= 6 ? tr(" · %1 months old: worth checking MSI's support page for updates").arg(months) : QString()); } }
     for (const msiwmi::Feature &f : msiwmi::features()) {
         ControlsPage::FeatureLine l; l.name = f.name; l.usable = f.usable();
         if (!f.present) l.status = tr("not on this laptop");
