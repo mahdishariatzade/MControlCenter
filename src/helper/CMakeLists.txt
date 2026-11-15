@@ -19,6 +19,8 @@ add_executable(mcontrolcenter-helper
   readwrite.h
   readwrite.cpp
   wmi.cpp
+  auth.h
+  auth.cpp
   msi-ec.h
   msi-ec.cpp
 )
@@ -26,5 +28,8 @@ target_link_libraries(mcontrolcenter-helper PRIVATE
   Qt6::Core
   Qt6::DBus
 )
+
+target_compile_options(mcontrolcenter-helper PRIVATE -fstack-protector-strong -D_FORTIFY_SOURCE=3 -fstack-clash-protection)
+target_link_options(mcontrolcenter-helper PRIVATE -Wl,-z,relro,-z,now)
 
 install(TARGETS mcontrolcenter-helper RUNTIME DESTINATION libexec)

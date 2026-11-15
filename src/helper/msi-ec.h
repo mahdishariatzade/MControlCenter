@@ -23,16 +23,17 @@
 
 #include <QtCore/QObject>
 #include <QtDBus/QDBusAbstractAdaptor>
+#include <QtDBus/QDBusContext>
 #include <QtDBus/QDBusVariant>
 
 /**
  * Interface for [msi-ec by BeardOverflow](https://github.com/BeardOverflow/msi-ec/)
  */
-class MsiEc : public QDBusAbstractAdaptor {
+class MsiEc : public QObject, public QDBusContext {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", INTERFACE_NAME_MSI_EC)
 public:
-    explicit MsiEc(QObject *parent) : QDBusAbstractAdaptor(parent) {}
+    explicit MsiEc(QObject *parent = nullptr) : QObject(parent) {}
 
 private:
     QString readFile(QString path) const;

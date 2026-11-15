@@ -23,15 +23,17 @@
 
 #include <QtCore/QObject>
 #include <QtDBus/QDBusAbstractAdaptor>
+#include <QtDBus/QDBusContext>
+#include <QtDBus/QDBusContext>
 #include <QtDBus/QDBusVariant>
 
 using BYTE = unsigned char;
 
-class Helper : public QDBusAbstractAdaptor {
+class Helper : public QObject, public QDBusContext {
 Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", INTERFACE_NAME)
 public:
-    explicit Helper(QObject *obj) : QDBusAbstractAdaptor(obj) {}
+    explicit Helper(QObject *obj = nullptr) : QObject(obj) {}
 
 signals:
     void aboutToQuit();

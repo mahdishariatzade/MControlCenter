@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## Unreleased
+- **Security: root helper lockdown.** Before this, any local user could call the root helper over D-Bus and write any byte to any EC offset (inherited from upstream). Now: every state-changing call is checked with polkit (action `io.github.dmitry_s93.mcontrolcenter.helper-write`: allowed without a prompt for a local active session, administrator otherwise, refused if polkit is unavailable); raw EC writes are limited to the offsets the app uses, each with a value allowlist (the hottest fan-curve point can never be set below 50 %); sysfs writes accept only plain tokens and range-checked numbers; `quit` and the `ec_sys` module load are gated too; the helper is built with stack protector, FORTIFY and full RELRO/BIND_NOW. Existing installs need the new `.policy` file (install.sh and the packages ship it).
 - Calibration: remaining-time estimate and MSI-style drain boost (full backlight + light CPU load)
 - Panel overdrive toggle, fan dust check (BIOS-gated), firmware card with BIOS age and a community BIOS hint, MSI charge-limit names, unofficial/beta disclaimer
 - install.sh restarts the root helper so updates take effect

@@ -22,7 +22,7 @@ if [ "$UNINSTALL" = 1 ]; then
     $SUDO systemctl disable --now mcontrolcenter-doctor.service 2>/dev/null || true
     $SUDO rm -vf /usr/bin/mcontrolcenter /usr/libexec/mcontrolcenter-helper /usr/share/applications/mcontrolcenter.desktop /etc/xdg/autostart/mcontrolcenter.desktop /etc/udev/rules.d/70-mcontrolcenter-rgb.rules /etc/udev/rules.d/71-mcontrolcenter-ddc.rules /etc/modules-load.d/mcontrolcenter-i2c.conf \
         /usr/share/icons/hicolor/scalable/apps/mcontrolcenter.svg /usr/share/dbus-1/system.d/mcontrolcenter-helper.conf /usr/share/dbus-1/system-services/mcontrolcenter.helper.service \
-        /etc/systemd/system/mcontrolcenter-doctor.service /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.battery.policy /etc/systemd/system/mcontrolcenter-battery.service
+        /etc/systemd/system/mcontrolcenter-doctor.service /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.battery.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.helper.policy /etc/systemd/system/mcontrolcenter-battery.service
     $SUDO dkms remove msi-wmi-platform/1.0 --all 2>/dev/null || true; $SUDO rm -rf /usr/src/msi-wmi-platform-1.0
     $SUDO rm -rvf /usr/libexec/mcontrolcenter
     $SUDO rm -rvf /usr/share/mcontrolcenter
@@ -55,6 +55,7 @@ $SUDO install -Dm755 scripts/mcontrolcenter-doctor /usr/libexec/mcontrolcenter/m
 $SUDO install -Dm755 scripts/mcontrolcenter-gpu /usr/libexec/mcontrolcenter/mcontrolcenter-gpu
 $SUDO install -Dm755 scripts/mcontrolcenter-battery /usr/libexec/mcontrolcenter/mcontrolcenter-battery
 $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.battery.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.battery.policy
+$SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.helper.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.helper.policy
 $SUDO install -Dm644 packaging/mcontrolcenter-battery.service /etc/systemd/system/mcontrolcenter-battery.service
 $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.gpu.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.gpu.policy
 $SUDO install -Dm644 packaging/io.github.dmitry_s93.mcontrolcenter.doctor.policy /usr/share/polkit-1/actions/io.github.dmitry_s93.mcontrolcenter.doctor.policy

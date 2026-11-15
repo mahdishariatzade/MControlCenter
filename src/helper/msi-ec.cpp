@@ -19,6 +19,8 @@
 #include "msi-ec.h"
 #include <QDir>
 #include <QFile>
+#include <QRegularExpression>
+#include "auth.h"
 
 // Available entries: https://github.com/BeardOverflow/msi-ec?tab=readme-ov-file#usage
 const QString msi_ec_path = "/sys/devices/platform/msi-ec";
@@ -65,6 +67,11 @@ bool MsiEc::readFileOnOff(QString path) const {
 }
 
 void MsiEc::writeFile(QString path, QString value) const {
+    // every setter funnels through here: caller must be authorised, and the value must look like a plain token
+    // (numbers, on/off, mode names), so nothing odd can reach sysfs. The msi-ec driver does the final range check.
+    if (!mccauth::authorized(this)) return;
+    static const QRegularExpression ok("^[A-Za-z0-9_ -]{1,32}$");
+    if (!ok.match(value).hasMatch()) { fprintf(stderr, "refused sysfs write of odd value to %s\n", qPrintable(path)); return; }
     if (QFile file(path); file.exists() && file.open(QIODevice::WriteOnly)) {
         file.write(value.toUtf8());
     }
@@ -239,6 +246,7 @@ int MsiEc::getCPUBasicFanSpeed() const {
     return readFile(msi_ec_cpu_basic_fan_speed).toInt();
 }
 void MsiEc::setCPUBasicFanSpeed(int value) const {
+    if (value < 0 || value > 150) return;
     writeFile(msi_ec_cpu_basic_fan_speed, QString::number(value));
 }
 
@@ -270,6 +278,7 @@ int MsiEc::getBatteryStartThreshold() const {
     return readFile(msi_ec_bat1_start_threshold).toInt();
 }
 void MsiEc::setBatteryStartThreshold(int value) const {
+    if (value < 0 || value > 100) return;
     writeFile(msi_ec_bat1_start_threshold, QString::number(value));
 }
 
@@ -281,6 +290,7 @@ int MsiEc::getBatteryEndThreshold() const {
     return readFile(msi_ec_bat1_end_threshold).toInt();
 }
 void MsiEc::setBatteryEndThreshold(int value) const {
+    if (value < 10 || value > 100) return;
     writeFile(msi_ec_bat1_end_threshold, QString::number(value));
 }
 
@@ -312,5 +322,6 @@ int MsiEc::getKeyboardBacklightBrightness() const {
     return readFile(msi_ec_kbd_backlight_brightness).toInt();
 }
 void MsiEc::setKeyboardBacklightBrightness(int value) const {
+    if (value < 0 || value > 3) return;
     writeFile(msi_ec_kbd_backlight_brightness, QString::number(value));
 }

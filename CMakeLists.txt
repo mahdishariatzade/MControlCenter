@@ -90,7 +90,7 @@ install(FILES resources/mcontrolcenter.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/
 install(FILES resources/mcontrolcenter.appdata.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 install(FILES src/helper/mcontrolcenter-helper.conf DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/system.d)
 install(FILES src/helper/mcontrolcenter.helper.service DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/system-services)
-install(FILES packaging/io.github.dmitry_s93.mcontrolcenter.doctor.policy packaging/io.github.dmitry_s93.mcontrolcenter.gpu.policy packaging/io.github.dmitry_s93.mcontrolcenter.battery.policy
+install(FILES packaging/io.github.dmitry_s93.mcontrolcenter.doctor.policy packaging/io.github.dmitry_s93.mcontrolcenter.gpu.policy packaging/io.github.dmitry_s93.mcontrolcenter.battery.policy packaging/io.github.dmitry_s93.mcontrolcenter.helper.policy
         DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/actions)
 install(FILES packaging/mcontrolcenter-doctor.service packaging/mcontrolcenter-battery.service DESTINATION lib/systemd/system)
 install(FILES packaging/70-mcontrolcenter-rgb.rules packaging/71-mcontrolcenter-ddc.rules DESTINATION lib/udev/rules.d)

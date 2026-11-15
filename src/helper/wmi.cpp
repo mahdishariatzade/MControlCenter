@@ -1,6 +1,7 @@
 // WMI2 register access for the few MSI features that the msi-ec driver does not expose (panel overdrive, fan dust check).
 // Goes through the msi-wmi-platform driver's debugfs files. Only a small whitelist of (register, bit) pairs can ever be written.
 #include "helper.h"
+#include "auth.h"
 #include <QDir>
 #include <QFile>
 #include <QProcess>
@@ -46,6 +47,7 @@ QByteArray Helper::wmiGet(const int &reg) const {          // [flag, value] or e
 }
 
 bool Helper::wmiSetBit(const int &reg, const int &bit, const bool &on) const {
+    if (!mccauth::authorized(this)) return false;
     if (!allowed(reg, bit) || !biosAllows(reg)) { fprintf(stderr, "wmiSetBit: refused (reg 0x%02X bit %d)\n", reg, bit); return false; }
     const QString d = ensureDir(); if (d.isEmpty()) return false;
     QByteArray cur; if (!xfer(d + "/get_data", QByteArray(1, char(reg)), &cur) || cur[0] != 1) return false;      // flag must be 1 = the firmware answered
